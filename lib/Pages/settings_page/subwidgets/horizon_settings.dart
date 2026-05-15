@@ -22,7 +22,7 @@ class HorizonSettings extends StatelessWidget {
         ),
         ListTile(
           leading: Icon(Icons.rate_review),
-          title: Text('Review Reins'),
+          title: Text('Review Horizon'),
           subtitle: Text('Share your feedback'),
           onTap: () async {
             if (await InAppReview.instance.isAvailable() && Platform.isIOS) {
@@ -35,8 +35,8 @@ class HorizonSettings extends StatelessWidget {
         Builder(
           builder: (builderContext) => ListTile(
             leading: Icon(Icons.share),
-            title: Text('Share Reins'),
-            subtitle: Text('Share Reins with your friends'),
+            title: Text('Share Horizon'),
+            subtitle: Text('Share Horizon with your friends'),
             onTap: () {
               _openShareSheet(builderContext);
             },
@@ -82,7 +82,7 @@ class HorizonSettings extends StatelessWidget {
           children: [
             Icon(Icons.favorite, color: Colors.red, size: 16),
             FlexibleText(
-              "Thanks for using Reins!",
+              "Thanks for using Horizon!",
               textAlign: TextAlign.center,
             ),
           ],
@@ -96,7 +96,7 @@ class HorizonSettings extends StatelessWidget {
     if (box != null) {
       SharePlus.instance.share(
         ShareParams(
-          text: 'Check out Reins: https://reins.ibrahimcetin.dev',
+          text: 'Check out Horizon: https://github.com/60MilesPerHour/Horizon',
           sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
         ),
       );
