@@ -4,21 +4,21 @@ import 'package:horizon/Widgets/chat_app_bar.dart';
 import 'package:horizon/Widgets/chat_drawer.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
-class ReinsMainPage extends StatelessWidget {
+class HorizonMainPage extends StatelessWidget {
   const ReinsMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     if (ResponsiveBreakpoints.of(context).isMobile) {
-      return _ReinsMobileMainPage();
+      return _HorizonMobileMainPage();
     } else {
-      return _ReinsLargeMainPage();
+      return _HorizonLargeMainPage();
     }
   }
 }
 
-class _ReinsMobileMainPage extends StatelessWidget {
-  const _ReinsMobileMainPage({super.key});
+class _HorizonMobileMainPage extends StatelessWidget {
+  const _HorizonMobileMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -30,8 +30,8 @@ class _ReinsMobileMainPage extends StatelessWidget {
   }
 }
 
-class _ReinsLargeMainPage extends StatelessWidget {
-  const _ReinsLargeMainPage({super.key});
+class _HorizonLargeMainPage extends StatelessWidget {
+  const _HorizonLargeMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {

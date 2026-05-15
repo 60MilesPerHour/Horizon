@@ -1,4 +1,4 @@
-package dev.ibrahimcetin.reins
+package com.miles.horizon
 
 import io.flutter.embedding.android.FlutterActivity
 

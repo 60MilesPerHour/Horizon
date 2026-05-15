@@ -68,13 +68,13 @@ void main() async {
           ),
         ),
       ],
-      child: const ReinsApp(),
+      child: const HorizonApp(),
     ),
   );
 }
 
-class ReinsApp extends StatelessWidget {
-  const ReinsApp({super.key});
+class HorizonApp extends StatelessWidget {
+  const HorizonApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +121,7 @@ class ReinsApp extends StatelessWidget {
           onGenerateRoute: (settings) {
             if (settings.name == '/') {
               return MaterialPageRoute(
-                builder: (context) => const ReinsMainPage(),
+                builder: (context) => const HorizonMainPage(),
               );
             }
 

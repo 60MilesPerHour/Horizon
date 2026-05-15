@@ -6,7 +6,7 @@ import 'dart:io' show Platform;
 
 import 'package:horizon/Widgets/flexible_text.dart';
 
-class ReinsSettings extends StatelessWidget {
+class HorizonSettings extends StatelessWidget {
   const ReinsSettings({super.key});
 
   @override
