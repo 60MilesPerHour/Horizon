@@ -148,15 +148,15 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
         onRefresh: () async {
           _fetchOperation = CancelableOperation.fromFuture(_fetchModels());
         },
-        child: RadioGroup<OllamaModel>(
-          groupValue: _selectedModel,
-          onChanged: (model) => setState(() => _selectedModel = model),
-          child: ListView.builder(
-            itemCount: _models.length,
-            itemBuilder: (context, index) {
-              return _ModelListTile(model: _models[index]);
-            },
-          ),
+        child: ListView.builder(
+          itemCount: _models.length,
+          itemBuilder: (context, index) {
+            return _ModelListTile(
+              model: _models[index],
+              isSelected: _selectedModel == _models[index],
+              onSelected: (model) => setState(() => _selectedModel = model),
+            );
+          },
         ),
       );
     } else {
@@ -167,8 +167,14 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
 
 class _ModelListTile extends StatelessWidget {
   final OllamaModel model;
+  final bool isSelected;
+  final Function(OllamaModel) onSelected;
 
-  const _ModelListTile({required this.model});
+  const _ModelListTile({
+    required this.model,
+    required this.isSelected,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -177,6 +183,8 @@ class _ModelListTile extends StatelessWidget {
 
     return RadioListTile<OllamaModel>(
       value: model,
+      groupValue: isSelected ? model : null,
+      onChanged: (_) => onSelected(model),
       title: Text(model.name),
       subtitle: model.parameterSize.isNotEmpty
           ? Text(
