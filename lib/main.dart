@@ -83,17 +83,32 @@ class ReinsApp extends StatelessWidget {
         keys: ['color', 'brightness'],
       ),
       builder: (context, box, _) {
+        final brightness = _brightness ?? MediaQuery.platformBrightnessOf(context);
+        final seedColor = box.get('color', defaultValue: Colors.grey) as Color;
+
         return MaterialApp(
           title: AppConstants.appName,
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
-              brightness: _brightness ?? MediaQuery.platformBrightnessOf(context),
+              brightness: Brightness.light,
               dynamicSchemeVariant: DynamicSchemeVariant.neutral,
-              seedColor: box.get('color', defaultValue: Colors.grey),
+              seedColor: seedColor,
             ),
             appBarTheme: const AppBarTheme(centerTitle: true),
             useMaterial3: true,
           ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              brightness: Brightness.dark,
+              dynamicSchemeVariant: DynamicSchemeVariant.neutral,
+              seedColor: seedColor,
+              surface: const Color(0xFF000000),
+            ),
+            scaffoldBackgroundColor: const Color(0xFF000000),
+            appBarTheme: const AppBarTheme(centerTitle: true),
+            useMaterial3: true,
+          ),
+          themeMode: brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
           builder: (context, child) => ResponsiveBreakpoints.builder(
             breakpoints: [
               const Breakpoint(start: 0, end: 450, name: MOBILE),
