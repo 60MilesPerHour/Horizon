@@ -7,7 +7,7 @@ import 'dart:io' show Platform;
 import 'package:horizon/Widgets/flexible_text.dart';
 
 class HorizonSettings extends StatelessWidget {
-  const ReinsSettings({super.key});
+  const HorizonSettings({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -15,7 +15,7 @@ class HorizonSettings extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Reins',
+          'Horizon',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),

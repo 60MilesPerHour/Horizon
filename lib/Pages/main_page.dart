@@ -5,7 +5,7 @@ import 'package:horizon/Widgets/chat_drawer.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 class HorizonMainPage extends StatelessWidget {
-  const ReinsMainPage({super.key});
+  const HorizonMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {
