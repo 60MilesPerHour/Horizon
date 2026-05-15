@@ -1,45 +1,31 @@
-# Reins
+# Horizon
 
-Reins is a multi-platform, open-source, privacy-first app designed for Ollama users. **It simplifies chat configurations** with a user-friendly interface to configure system prompts, change the chat model, and adjust options for each conversation **individually**. Reins ensures a smooth, customizable experience for anyone working with self-hosted LLMs.
+A customized fork of [Reins](https://github.com/ibrahimcetin/reins) — a multi-platform, open-source, privacy-first chat app for Ollama. **Horizon focuses on reliability and polish**, with fixes for networking issues, improved dark theme (OLED-optimized black), and refined UI.
 
-If you like the project, don't forget to give a ⭐️!
+Configure system prompts, switch models mid-conversation, and fine-tune parameters (temperature, seed, context size, max tokens) — **all per-conversation, no global settings needed**. Built on Flutter with a smooth, native feel across iOS, Android, macOS, Windows, and Linux.
 
-<a href="https://apps.apple.com/tr/app/reins-chat-for-ollama/id6739738501">
-  <img src=https://github.com/user-attachments/assets/fd7d615d-46c1-4266-b558-fb8e42555b04 alt="Download on the App Store" height=80 />
-</a>
+Get the latest [release here](https://github.com/60MilesPerHour/Horizon/releases).
 
-<a href='https://flathub.org/apps/dev.ibrahimcetin.reins'>
-  <img src='https://github.com/user-attachments/assets/2c902ab8-bef6-44a7-ae50-40da9ead3a13' alt='Get it on Flathub' height=80 />
-</a>
+## Features
+- **Per-Conversation Configuration**: System prompt, model selection, and inference parameters (temperature, seed, context, tokens) — all configurable per chat
+- **Live Model Switching**: Change models mid-conversation without starting over
+- **Image Support**: Send and receive images inline with full compression
+- **Message Editing & Regeneration**: Edit your messages and regenerate responses
+- **Real-Time Streaming**: See responses as they arrive, word by word
+- **Custom Models**: Save your favorite prompt + config combos as new models
+- **Responsive Design**: Optimized for mobile, tablet, and desktop — single codebase, native feel everywhere
+- **Dark Theme**: OLED-optimized true black for power and battery savings
+- **Bulletproof Networking**: Fixed timeout handling, robust error recovery, stream management
 
-You can download it for iOS and macOS on the App Store and for Linux on Flathub.
-
-You can find Android and Windows releases from [here](https://github.com/ibrahimcetin/reins/releases).
-
-## Key Features
-- **Customizable Chat Configurations**: Configure system prompt, model, and options (e.g., temperature, seed, context size, max tokens) for each conversation.
-- **Model Selection & Switching**: Change the model of the current chat without interruption.
-- **Message Editing & Regeneration**: Edit and regenerate messages
-- **Save Custom Models**: Save system and chat prompts as new models.
-- **Image Integration**: Send and receive images within chats.
-- **Multiple Chat Management**: Easily manage and switch between multiple conversations.
-- **Real-Time Message Streaming**: Get messages instantly as they arrive.
-
-## Mobile Screenshots
-<img src=https://github.com/user-attachments/assets/29c06936-a1ff-430b-b892-3195db01497a alt="Main" height=500>
-<img src=https://github.com/user-attachments/assets/a18f5d7b-d547-4da7-adbe-332349597f69 alt="Configuration" height=500>
-<img src=https://github.com/user-attachments/assets/fd445119-9f7c-4dc1-bff6-df534f0a7a85 alt="Advanced Configurations" height=500>
-<img src=https://github.com/user-attachments/assets/2db44515-fd63-4263-a16a-beecc9373c96 alt="Edit & Regenerate" height=500>
-<img src=https://github.com/user-attachments/assets/ad8ce6bd-53a9-4ab4-b3b1-921a9ecd2a1e alt="Change Current Chat Model" height=500>
-<img src=https://github.com/user-attachments/assets/fedb9a5f-f840-49b8-a9eb-90f9d222f6f3 alt="Select Model" height=500>
-<img src=https://github.com/user-attachments/assets/f873ebdc-4a41-44ca-b5a2-75a1c6784ddd alt="Dark Theme" height=500>
-
-## Large Screen Screenshots
-<img src=https://github.com/user-attachments/assets/ab34966e-8975-4ee9-a498-03b3ed2d086a alt="Main" height=375>
-<img src=https://github.com/user-attachments/assets/5f561d77-3b66-444e-aa6f-cf7d3ac60557 alt="Configuration" height=375>
+## About
+Horizon is a fork/customization of the original [Reins](https://github.com/ibrahimcetin/reins) project by Ibrahim Çetin, focused on stability, reliability, and polish. Major improvements include:
+- Fixed networking timeouts and stream management issues
+- OLED-optimized dark theme
+- Improved error handling across API calls
+- Refined UI and responsiveness
 
 ## Contributing
-Contributions are welcome! Feel free to fork the repository, make changes, and submit a pull request.
+Found a bug or have an idea? Issues and PRs welcome!
 
 ## License
-Reins is licensed under the GPL-3.0.
+Licensed under GPL-3.0 (same as the original Reins project).
