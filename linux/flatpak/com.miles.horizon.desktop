@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
 
-Name=Reins
-Comment=Private AI Chat
+Name=Horizon
+Comment=Private AI Chat for Ollama
 Categories=Utility;Development;Chat;
 Keywords=ai;chat;private;ollama;llm
 
-Icon=dev.ibrahimcetin.reins
-Exec=reins
+Icon=com.miles.horizon
+Exec=horizon
 Terminal=false
 StartupNotify=true

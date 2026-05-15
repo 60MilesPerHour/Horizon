@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.ibrahimcetin.reins</id>
+  <id>com.miles.horizon</id>
 
   <name>Reins: Chat for Ollama</name>
   <summary>Private AI Chat</summary>
@@ -27,8 +27,8 @@
     </p>
   </description>
 
-  <icon type="stock">dev.ibrahimcetin.reins</icon>
-  <launchable type="desktop-id">dev.ibrahimcetin.reins.desktop</launchable>
+  <icon type="stock">com.miles.horizon</icon>
+  <launchable type="desktop-id">com.miles.horizon.desktop</launchable>
 
   <developer id="dev.ibrahimcetin">
      <name>İbrahim Çetin</name>
