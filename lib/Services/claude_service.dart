@@ -12,7 +12,7 @@ import 'package:horizon/Services/chat_service.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
 /// Anthropic Messages API client.
-class ClaudeService implements ChatService {
+class ClaudeService extends ChatService {
   static const String _baseUrl = 'https://api.anthropic.com';
   static const String _apiVersion = '2023-06-01';
 

@@ -12,7 +12,7 @@ import 'package:horizon/Services/chat_service.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
 /// OpenAI Chat Completions API client (also works with OpenAI-compatible endpoints).
-class OpenAIService implements ChatService {
+class OpenAIService extends ChatService {
   String _apiKey;
   String _baseUrl;
 

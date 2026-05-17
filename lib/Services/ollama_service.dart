@@ -12,7 +12,7 @@ import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/api/create_request.dart';
 import 'package:horizon/Services/chat_service.dart';
 
-class OllamaService implements ChatService {
+class OllamaService extends ChatService {
   @override
   String get providerId => 'ollama';
 
