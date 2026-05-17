@@ -8,15 +8,20 @@ class OllamaChat {
   final String? systemPrompt;
   final OllamaChatOptions options;
 
+  /// Backing provider for this chat: 'ollama' (default), 'anthropic', 'openai'.
+  final String provider;
+
   OllamaChat({
     String? id,
     required this.model,
     String? title,
     this.systemPrompt,
     OllamaChatOptions? options,
+    String? provider,
   })  : id = id ?? Uuid().v4(),
         title = title ?? 'New Chat',
-        options = options ?? OllamaChatOptions();
+        options = options ?? OllamaChatOptions(),
+        provider = provider ?? 'ollama';
 
   factory OllamaChat.fromMap(Map<String, dynamic> map) {
     return OllamaChat(
@@ -25,6 +30,7 @@ class OllamaChat {
       title: map['chat_title'],
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
+      provider: map['provider'] as String?,
     );
   }
 }

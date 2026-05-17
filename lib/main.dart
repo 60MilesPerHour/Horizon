@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
@@ -47,16 +48,41 @@ void main() async {
     await inAppReview.requestReview();
   }
 
+  // Load cloud-provider API keys from secure storage (best-effort).
+  String? claudeKey;
+  String? openaiKey;
+  String? openaiBaseUrl;
+  try {
+    const storage = FlutterSecureStorage();
+    claudeKey = await storage.read(key: 'anthropic_api_key');
+    openaiKey = await storage.read(key: 'openai_api_key');
+    openaiBaseUrl = await storage.read(key: 'openai_base_url');
+  } catch (_) {
+    // Secure storage may be unavailable on Linux without a keyring; tolerate.
+  }
+
+  final ollamaService = OllamaService();
+  final claudeService = ClaudeService(apiKey: claudeKey);
+  final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl);
+  final registry = ChatServiceRegistry(
+    ollama: ollamaService,
+    claude: claudeService,
+    openai: openaiService,
+  );
+
   runApp(
     MultiProvider(
       providers: [
-        Provider(create: (_) => OllamaService()),
+        Provider(create: (_) => ollamaService),
+        Provider(create: (_) => claudeService),
+        Provider(create: (_) => openaiService),
+        Provider(create: (_) => registry),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
         ChangeNotifierProvider(
           create: (context) => ChatProvider(
-            ollamaService: context.read(),
+            registry: context.read(),
             databaseService: context.read(),
           ),
         ),
@@ -65,6 +91,7 @@ void main() async {
             chatProvider: context.read(),
             permissionService: context.read(),
             imageService: context.read(),
+            registry: context.read(),
           ),
         ),
       ],

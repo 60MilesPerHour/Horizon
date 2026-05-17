@@ -2,8 +2,7 @@ import 'package:horizon/Models/api/tags_response.dart';
 import 'package:horizon/Models/api/show_response.dart';
 import 'package:horizon/Models/model_capabilities.dart';
 
-/// Domain model representing an Ollama model.
-/// Combines data from /api/tags and optionally /api/show.
+/// Domain model representing a chat model (Ollama or cloud-hosted).
 class OllamaModel {
   final String name;
   final String model;
@@ -13,6 +12,9 @@ class OllamaModel {
   final String parameterSize;
   final ModelCapabilities? capabilities;
 
+  /// Provider id this model belongs to: 'ollama', 'anthropic', 'openai'.
+  final String provider;
+
   OllamaModel({
     required this.name,
     required this.model,
@@ -21,6 +23,7 @@ class OllamaModel {
     required this.digest,
     required this.parameterSize,
     this.capabilities,
+    this.provider = 'ollama',
   });
 
   /// Creates an OllamaModel from /api/tags and optional /api/show response
@@ -33,6 +36,7 @@ class OllamaModel {
       digest: tagsModel.digest,
       parameterSize: tagsModel.details.parameterSize,
       capabilities: showResponse != null ? ModelCapabilities.fromList(showResponse.capabilities) : null,
+      provider: 'ollama',
     );
   }
 
@@ -45,6 +49,24 @@ class OllamaModel {
         digest: json["digest"],
         parameterSize: json["details"]["parameter_size"] ?? '',
         capabilities: null,
+        provider: json["provider"] ?? 'ollama',
+      );
+
+  /// Builder for cloud-provider models which lack /api/tags-shaped metadata.
+  factory OllamaModel.cloud({
+    required String provider,
+    required String id,
+    String? parameterSize,
+    ModelCapabilities? capabilities,
+  }) => OllamaModel(
+        name: id,
+        model: id,
+        modifiedAt: DateTime.now(),
+        size: 0,
+        digest: '$provider:$id',
+        parameterSize: parameterSize ?? '',
+        capabilities: capabilities,
+        provider: provider,
       );
 
   Map<String, dynamic> toJson() => {
@@ -54,6 +76,7 @@ class OllamaModel {
         "size": size,
         "digest": digest,
         "parameter_size": parameterSize,
+        "provider": provider,
       };
 
   @override

@@ -148,20 +148,76 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
         onRefresh: () async {
           _fetchOperation = CancelableOperation.fromFuture(_fetchModels());
         },
-        child: ListView.builder(
-          itemCount: _models.length,
-          itemBuilder: (context, index) {
-            return _ModelListTile(
-              model: _models[index],
-              isSelected: _selectedModel == _models[index],
-              onSelected: (model) => setState(() => _selectedModel = model),
-            );
-          },
+        child: _GroupedModelList(
+          models: _models,
+          selectedModel: _selectedModel,
+          onSelected: (model) => setState(() => _selectedModel = model),
         ),
       );
     } else {
       return const SizedBox.shrink();
     }
+  }
+}
+
+class _GroupedModelList extends StatelessWidget {
+  final List<OllamaModel> models;
+  final OllamaModel? selectedModel;
+  final Function(OllamaModel) onSelected;
+
+  const _GroupedModelList({
+    required this.models,
+    required this.selectedModel,
+    required this.onSelected,
+  });
+
+  static const _providerLabels = {
+    'ollama': 'Ollama',
+    'anthropic': 'Claude',
+    'openai': 'OpenAI',
+  };
+
+  static const _providerOrder = ['ollama', 'anthropic', 'openai'];
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = <String, List<OllamaModel>>{};
+    for (final m in models) {
+      grouped.putIfAbsent(m.provider, () => []).add(m);
+    }
+
+    final sortedKeys = grouped.keys.toList()
+      ..sort((a, b) {
+        final ai = _providerOrder.indexOf(a);
+        final bi = _providerOrder.indexOf(b);
+        return (ai == -1 ? 999 : ai).compareTo(bi == -1 ? 999 : bi);
+      });
+
+    final children = <Widget>[];
+    for (final provider in sortedKeys) {
+      final list = grouped[provider]!;
+      if (sortedKeys.length > 1) {
+        children.add(Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            _providerLabels[provider] ?? provider,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+        ));
+      }
+      for (final m in list) {
+        children.add(_ModelListTile(
+          model: m,
+          isSelected: selectedModel == m,
+          onSelected: onSelected,
+        ));
+      }
+    }
+
+    return ListView(children: children);
   }
 }
 

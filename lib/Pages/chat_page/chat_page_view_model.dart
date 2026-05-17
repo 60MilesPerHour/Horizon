@@ -19,14 +19,17 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
+  final ChatServiceRegistry _registry;
 
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
     required ImageService imageService,
+    required ChatServiceRegistry registry,
   })  : _chatProvider = chatProvider,
         _permissionService = permissionService,
-        _imageService = imageService {
+        _imageService = imageService,
+        _registry = registry {
     _initialize();
   }
 
@@ -55,7 +58,8 @@ class ChatPageViewModel extends ChangeNotifier {
   late final StreamSubscription _settingsSubscription;
 
   bool get isServerConfigured {
-    return Hive.box('settings').get('serverAddress') != null;
+    if (Hive.box('settings').get('serverAddress') != null) return true;
+    return _registry.all.any((s) => s.providerId != 'ollama' && s.isConfigured);
   }
 
   // ============================================================

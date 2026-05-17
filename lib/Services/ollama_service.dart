@@ -10,8 +10,19 @@ import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/api/create_request.dart';
+import 'package:horizon/Services/chat_service.dart';
 
-class OllamaService {
+class OllamaService implements ChatService {
+  @override
+  String get providerId => 'ollama';
+
+  /// True only when the user has set a non-empty server address.
+  /// Without this we'd always try localhost and dirty the model list.
+  bool _userSetAddress = false;
+
+  @override
+  bool get isConfigured => _userSetAddress;
+
   /// The base URL for the Ollama service API.
   ///
   /// This URL is used as the root endpoint for all network requests
@@ -21,13 +32,18 @@ class OllamaService {
   /// The default value is "http://localhost:11434".
   String _baseUrl;
   String get baseUrl => _baseUrl;
-  set baseUrl(String? value) => _baseUrl = value ?? "http://localhost:11434";
+  set baseUrl(String? value) {
+    _userSetAddress = value != null && value.isNotEmpty;
+    _baseUrl = (value == null || value.isEmpty) ? "http://localhost:11434" : value;
+  }
 
   /// The headers to include in all network requests.
   final headers = {'Content-Type': 'application/json'};
 
   /// Creates a new instance of the Ollama service.
-  OllamaService({String? baseUrl}) : _baseUrl = baseUrl ?? "http://localhost:11434";
+  OllamaService({String? baseUrl})
+      : _baseUrl = baseUrl ?? "http://localhost:11434",
+        _userSetAddress = baseUrl != null && baseUrl.isNotEmpty;
 
   /// Constructs a URL by resolving the provided path against the base URL.
   Uri constructUrl(String path) {

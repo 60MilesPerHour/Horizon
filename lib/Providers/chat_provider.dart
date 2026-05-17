@@ -11,11 +11,11 @@ import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
+import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
-import 'package:horizon/Services/ollama_service.dart';
 
 class ChatProvider extends ChangeNotifier {
-  final OllamaService _ollamaService;
+  final ChatServiceRegistry _registry;
   final DatabaseService _databaseService;
 
   List<OllamaMessage> _messages = [];
@@ -66,15 +66,15 @@ class ChatProvider extends ChangeNotifier {
   ChatConfigureArguments? _emptyChatConfiguration;
 
   ChatProvider({
-    required OllamaService ollamaService,
+    required ChatServiceRegistry registry,
     required DatabaseService databaseService,
-  })  : _ollamaService = ollamaService,
+  })  : _registry = registry,
         _databaseService = databaseService {
     _initialize();
   }
 
   Future<void> _initialize() async {
-    _updateOllamaServiceAddress();
+    _bindOllamaServerAddress();
 
     await _databaseService.open("ollama_chat.db");
     _chats = await _databaseService.getAllChats();
@@ -126,7 +126,10 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> createNewChat(OllamaModel model) async {
-    final chat = await _databaseService.createChat(model.name);
+    final chat = await _databaseService.createChat(
+      model.name,
+      provider: model.provider,
+    );
 
     _chats.insert(0, chat);
     _currentChatIndex = 0;
@@ -277,7 +280,8 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat) async {
     if (_messages.isEmpty) return null;
 
-    final stream = _ollamaService.chatStream(_messages, chat: associatedChat);
+    final service = _registry.forChat(associatedChat);
+    final stream = service.chatStream(_messages, chat: associatedChat);
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
@@ -388,15 +392,15 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<List<OllamaModel>> fetchAvailableModels() async {
-    return await _ollamaService.listModels();
+    return await _registry.listAllModels();
   }
 
-  void _updateOllamaServiceAddress() {
+  void _bindOllamaServerAddress() {
     final settingsBox = Hive.box('settings');
-    _ollamaService.baseUrl = settingsBox.get('serverAddress');
+    _registry.ollama.baseUrl = settingsBox.get('serverAddress');
 
     settingsBox.listenable(keys: ["serverAddress"]).addListener(() {
-      _ollamaService.baseUrl = settingsBox.get('serverAddress');
+      _registry.ollama.baseUrl = settingsBox.get('serverAddress');
 
       // This will update empty chat state to dismiss "Tap to configure server address" message
       notifyListeners();
@@ -406,11 +410,14 @@ class ChatProvider extends ChangeNotifier {
   Future<void> saveAsNewModel(String modelName) async {
     final associatedChat = currentChat;
     if (associatedChat == null) {
-      // TODO: Empty chat should be saved as a new model.
       throw OllamaException("No chat is selected.");
     }
 
-    await _ollamaService.createModel(
+    if (associatedChat.provider != 'ollama') {
+      throw OllamaException("Saving models is only supported for Ollama chats.");
+    }
+
+    await _registry.ollama.createModel(
       modelName,
       chat: associatedChat,
       messages: _messages.toList(),
@@ -426,10 +433,12 @@ class ChatProvider extends ChangeNotifier {
     final chat = OllamaChat(
       model: associatedChat.model,
       systemPrompt: GenerateTitleConstants.systemPrompt,
+      provider: associatedChat.provider,
     );
 
     // Generate a title for the message
-    final stream = _ollamaService.generateStream(
+    final service = _registry.forChat(chat);
+    final stream = service.generateStream(
       GenerateTitleConstants.prompt + message.content,
       chat: chat,
     );

@@ -22,14 +22,22 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 1,
+      version: 2,
+      onUpgrade: (Database db, int oldVersion, int newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            "ALTER TABLE chats ADD COLUMN provider TEXT NOT NULL DEFAULT 'ollama';",
+          );
+        }
+      },
       onCreate: (Database db, int version) async {
         await db.execute('''CREATE TABLE IF NOT EXISTS chats (
 chat_id TEXT PRIMARY KEY,
 model TEXT NOT NULL,
 chat_title TEXT NOT NULL,
 system_prompt TEXT,
-options TEXT
+options TEXT,
+provider TEXT NOT NULL DEFAULT 'ollama'
 ) WITHOUT ROWID;''');
 
         await db.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -63,7 +71,7 @@ END;''');
 
   // Chat Operations
 
-  Future<OllamaChat> createChat(String model) async {
+  Future<OllamaChat> createChat(String model, {String provider = 'ollama'}) async {
     final id = Uuid().v4();
 
     await _db.insert('chats', {
@@ -72,6 +80,7 @@ END;''');
       'chat_title': 'New Chat',
       'system_prompt': null,
       'options': null,
+      'provider': provider,
     });
 
     return (await getChat(id))!;
@@ -130,7 +139,7 @@ END;''');
 
   Future<List<OllamaChat>> getAllChats() async {
     final List<Map<String, dynamic>> maps = await _db.rawQuery(
-        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, MAX(messages.timestamp) AS last_update
+        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.provider, MAX(messages.timestamp) AS last_update
 FROM chats
 LEFT JOIN messages ON chats.chat_id = messages.chat_id
 GROUP BY chats.chat_id

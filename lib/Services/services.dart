@@ -1,4 +1,8 @@
+export 'chat_service.dart';
+export 'chat_service_registry.dart';
+export 'claude_service.dart';
 export 'database_service.dart';
 export 'ollama_service.dart';
+export 'openai_service.dart';
 export 'permission_service.dart';
 export 'image_service.dart';
