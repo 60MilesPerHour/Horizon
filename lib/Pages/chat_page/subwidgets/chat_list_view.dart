@@ -78,6 +78,7 @@ class _ChatListViewState extends State<ChatListView> {
         CustomScrollView(
           controller: _scrollController,
           reverse: true,
+          cacheExtent: 800,
           physics: RetainedPositionScrollPhysics(
             widgetSizeProxy: _messageSizeProxy,
           ),
@@ -112,14 +113,19 @@ class _ChatListViewState extends State<ChatListView> {
                 final message = widget.messages[widget.messages.length - index - 1];
 
                 if (index == 0) {
-                  return ObserveSize(
-                    key: Key(message.id),
-                    onSizeChanged: _onMessageSizeChanged,
-                    child: ChatBubble(message: message),
+                  return RepaintBoundary(
+                    child: ObserveSize(
+                      key: Key(message.id),
+                      onSizeChanged: _onMessageSizeChanged,
+                      child: ChatBubble(message: message),
+                    ),
                   );
                 }
 
-                return ChatBubble(message: message);
+                return RepaintBoundary(
+                  key: Key(message.id),
+                  child: ChatBubble(message: message),
+                );
               },
             ),
           ],

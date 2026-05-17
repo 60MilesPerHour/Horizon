@@ -11,6 +11,23 @@ import 'chat_bubble_image.dart';
 import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart';
 
+final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
+  <md.BlockSyntax>[
+    ThinkBlockSyntax(),
+    ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+  ],
+  <md.InlineSyntax>[
+    md.EmojiSyntax(),
+    ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+  ],
+);
+
+final TextStyle _markdownCodeStyle = GoogleFonts.sourceCodePro();
+
+final Map<String, MarkdownElementBuilder> _markdownBuilders = {
+  'think': ThinkBlockBuilder(),
+};
+
 class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
 
@@ -98,19 +115,10 @@ class _ChatBubbleBody extends StatelessWidget {
               selectable: true,
               softLineBreak: true,
               styleSheet: context.markdownStyleSheet.copyWith(
-                code: GoogleFonts.sourceCodePro(),
+                code: _markdownCodeStyle,
               ),
-              builders: {'think': ThinkBlockBuilder()},
-              extensionSet: md.ExtensionSet(
-                <md.BlockSyntax>[
-                  ThinkBlockSyntax(),
-                  ...md.ExtensionSet.gitHubFlavored.blockSyntaxes
-                ],
-                <md.InlineSyntax>[
-                  md.EmojiSyntax(),
-                  ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes
-                ],
-              ),
+              builders: _markdownBuilders,
+              extensionSet: _markdownExtensionSet,
               onTapLink: (text, href, title) => launchUrlString(href!),
             ),
           ),
