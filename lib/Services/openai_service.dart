@@ -92,8 +92,11 @@ class OpenAIService extends ChatService {
       'model': chat.model,
       'messages': await _encodeMessages(messages, chat.systemPrompt),
       'stream': true,
-      'temperature': chat.options.temperature,
     };
+    // o-series reasoning models (o1, o3, o4, etc.) reject `temperature`.
+    if (_acceptsTemperature(chat.model)) {
+      body['temperature'] = chat.options.temperature;
+    }
     if (chat.options.maxTokens > 0) {
       body['max_completion_tokens'] = chat.options.maxTokens;
     }
@@ -209,6 +212,14 @@ class OpenAIService extends ChatService {
       case OllamaMessageRole.system:
         return 'system';
     }
+  }
+
+  static bool _acceptsTemperature(String model) {
+    final lower = model.toLowerCase();
+    if (lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
+      return false;
+    }
+    return true;
   }
 
   static bool _isChatModel(String id) {

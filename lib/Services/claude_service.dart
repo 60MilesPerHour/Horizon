@@ -91,8 +91,12 @@ class ClaudeService extends ChatService {
       'max_tokens': chat.options.maxTokens > 0 ? chat.options.maxTokens : 4096,
       'messages': await _encodeMessages(messages),
       'stream': true,
-      'temperature': chat.options.temperature,
     };
+    // Claude 4.x extended-thinking models reject `temperature` outright.
+    // Only forward it for models that accept it (legacy 3.x / non-thinking).
+    if (_acceptsTemperature(chat.model)) {
+      body['temperature'] = chat.options.temperature;
+    }
     if (chat.systemPrompt != null && chat.systemPrompt!.isNotEmpty) {
       body['system'] = chat.systemPrompt;
     }
@@ -202,6 +206,14 @@ class ClaudeService extends ChatService {
       }
     }
     return encoded;
+  }
+
+  /// Claude 4.x extended-thinking models (opus-4-*, sonnet-4-6+, haiku-4-5+)
+  /// reject `temperature`. Legacy claude-3.x and older 4.x models still take it.
+  static bool _acceptsTemperature(String model) {
+    final lower = model.toLowerCase();
+    if (lower.startsWith('claude-3')) return true;
+    return false;
   }
 
   String _roleName(OllamaMessageRole role) {
