@@ -58,8 +58,11 @@ jobs:
         run: |
           /usr/bin/sed -i '' \
             -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' \
+            -e 's/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Manual;/g' \
             -e 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' \
             -e 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' \
+            -e 's/"CODE_SIGN_IDENTITY\[sdk=macosx\*\]" = "Apple Development";/"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";/g' \
+            -e 's/ENABLE_HARDENED_RUNTIME = YES;/ENABLE_HARDENED_RUNTIME = NO;/g' \
             macos/Runner.xcodeproj/project.pbxproj
 
       - name: Build macOS (unsigned)
