@@ -491,7 +491,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.miles.horizon.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/reins";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Horizon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Horizon";
 			};
 			name = Debug;
 		};
@@ -506,7 +506,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.miles.horizon.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/reins";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Horizon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Horizon";
 			};
 			name = Release;
 		};
@@ -521,7 +521,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.miles.horizon.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/reins";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Horizon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Horizon";
 			};
 			name = Profile;
 		};
