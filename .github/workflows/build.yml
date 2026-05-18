@@ -54,8 +54,20 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build macOS
+      - name: Strip code-signing requirements (CI has no certificate)
+        run: |
+          /usr/bin/sed -i '' \
+            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' \
+            -e 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' \
+            -e 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' \
+            macos/Runner.xcodeproj/project.pbxproj
+
+      - name: Build macOS (unsigned)
         run: flutter build macos --release
+        env:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGNING_REQUIRED: "NO"
+          CODE_SIGNING_ALLOWED: "NO"
 
       - name: Zip .app bundle
         run: |
