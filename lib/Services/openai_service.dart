@@ -40,7 +40,7 @@ class OpenAIService extends ChatService {
   @override
   Future<List<OllamaModel>> listModels() async {
     if (!isConfigured) {
-      throw OllamaException('OpenAI API key not set.');
+      throw OllamaException('[OpenAI] API key not set.');
     }
 
     try {
@@ -67,12 +67,12 @@ class OpenAIService extends ChatService {
       }
 
       throw OllamaException(
-        HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body),
+        '[OpenAI] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}',
       );
     } on TimeoutException {
-      throw OllamaException('OpenAI API timed out.');
+      throw OllamaException('[OpenAI] API timed out.');
     } on SocketException {
-      throw OllamaException('Network error contacting OpenAI API.');
+      throw OllamaException('[OpenAI] Network error contacting API.');
     }
   }
 
@@ -82,7 +82,7 @@ class OpenAIService extends ChatService {
     required OllamaChat chat,
   }) async* {
     if (!isConfigured) {
-      throw OllamaException('OpenAI API key not set.');
+      throw OllamaException('[OpenAI] API key not set.');
     }
 
     final request = http.Request('POST', Uri.parse('$_baseUrl/v1/chat/completions'));
@@ -105,15 +105,15 @@ class OpenAIService extends ChatService {
       if (response.statusCode != 200) {
         final text = await response.stream.bytesToString();
         throw OllamaException(
-          HttpErrorFormatter.formatHttpError(response.statusCode, body: text),
+          '[OpenAI] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: text)}',
         );
       }
 
       yield* _parseSse(response.stream, chat.model);
     } on TimeoutException {
-      throw OllamaException('OpenAI API timed out.');
+      throw OllamaException('[OpenAI] API timed out.');
     } on SocketException {
-      throw OllamaException('Network error contacting OpenAI API.');
+      throw OllamaException('[OpenAI] Network error contacting API.');
     }
   }
 

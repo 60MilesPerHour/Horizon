@@ -98,11 +98,11 @@ class OllamaService extends ChatService {
           throw OllamaException("Invalid response format: ${e.toString()}");
         }
       } else if (response.statusCode == 404) {
-        throw OllamaException("${chat.model} not found on the server.");
+        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -135,12 +135,12 @@ class OllamaService extends ChatService {
           yield message;
         }
       } else if (response.statusCode == 404) {
-        throw OllamaException("${chat.model} not found on the server.");
+        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
         final body = await response.stream.bytesToString();
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -185,11 +185,11 @@ class OllamaService extends ChatService {
           throw OllamaException("Invalid response format: ${e.toString()}");
         }
       } else if (response.statusCode == 404) {
-        throw OllamaException("${chat.model} not found on the server.");
+        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -221,12 +221,12 @@ class OllamaService extends ChatService {
           yield message;
         }
       } else if (response.statusCode == 404) {
-        throw OllamaException("${chat.model} not found on the server.");
+        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
         final body = await response.stream.bytesToString();
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -306,7 +306,7 @@ class OllamaService extends ChatService {
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -371,7 +371,7 @@ class OllamaService extends ChatService {
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");
@@ -397,7 +397,7 @@ class OllamaService extends ChatService {
       } else if (response.statusCode == 500) {
         throw OllamaException("Internal server error.");
       } else {
-        throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     } on TimeoutException {
       throw OllamaException("Request timed out. Check your network connection.");

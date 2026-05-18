@@ -58,7 +58,10 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     );
 
     if (selectedModel != null) {
-      await chatProvider.updateCurrentChat(newModel: selectedModel.name);
+      await chatProvider.updateCurrentChat(
+        newModel: selectedModel.name,
+        newProvider: selectedModel.provider,
+      );
     }
   }
 

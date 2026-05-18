@@ -151,6 +151,7 @@ class ChatProvider extends ChangeNotifier {
     String? newTitle,
     String? newSystemPrompt,
     OllamaChatOptions? newOptions,
+    String? newProvider,
   }) async {
     await updateChat(
       currentChat,
@@ -158,6 +159,7 @@ class ChatProvider extends ChangeNotifier {
       newTitle: newTitle,
       newSystemPrompt: newSystemPrompt,
       newOptions: newOptions,
+      newProvider: newProvider,
     );
   }
 
@@ -170,6 +172,7 @@ class ChatProvider extends ChangeNotifier {
     String? newTitle,
     String? newSystemPrompt,
     OllamaChatOptions? newOptions,
+    String? newProvider,
   }) async {
     if (chat == null) {
       final chatOptions = newOptions ?? _emptyChatConfiguration?.chatOptions;
@@ -184,6 +187,7 @@ class ChatProvider extends ChangeNotifier {
         newTitle: newTitle,
         newSystemPrompt: newSystemPrompt,
         newOptions: newOptions,
+        newProvider: newProvider,
       );
 
       final chatIndex = _chats.indexWhere((c) => c.id == chat.id);
@@ -286,6 +290,25 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
 
+    // Coalesce notifyListeners to at most 30 Hz so Anthropic/OpenAI
+    // single-token SSE chunks don't trigger 50+ rebuilds per second.
+    const minNotifyGap = Duration(milliseconds: 33);
+    DateTime lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
+    Timer? trailingNotify;
+    void requestNotify() {
+      trailingNotify?.cancel();
+      final now = DateTime.now();
+      if (now.difference(lastNotify) >= minNotifyGap) {
+        notifyListeners();
+        lastNotify = now;
+      } else {
+        trailingNotify = Timer(minNotifyGap, () {
+          notifyListeners();
+          lastNotify = DateTime.now();
+        });
+      }
+    }
+
     try {
       await for (receivedMessage in stream) {
         if (_activeChatStreams.containsKey(associatedChat.id) == false) {
@@ -308,9 +331,10 @@ class ChatProvider extends ChangeNotifier {
           streamingMessage.content += receivedMessage.content;
         }
 
-        notifyListeners();
+        requestNotify();
       }
     } finally {
+      trailingNotify?.cancel();
       _streamSubscriptions.remove(associatedChat.id);
     }
 
@@ -319,6 +343,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     streamingMessage?.createdAt = DateTime.now();
+    notifyListeners();
 
     return streamingMessage;
   }

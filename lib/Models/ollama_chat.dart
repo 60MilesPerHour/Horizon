@@ -24,14 +24,30 @@ class OllamaChat {
         provider = provider ?? 'ollama';
 
   factory OllamaChat.fromMap(Map<String, dynamic> map) {
+    final model = map['model'] as String? ?? '';
+    final storedProvider = map['provider'] as String?;
     return OllamaChat(
       id: map['chat_id'],
-      model: map['model'],
+      model: model,
       title: map['chat_title'],
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
-      provider: map['provider'] as String?,
+      provider: inferProvider(model, storedProvider),
     );
+  }
+
+  /// Self-healing: if the stored provider doesn't match the model name shape,
+  /// pick the obvious one. Protects against rows written before per-chat
+  /// routing was wired correctly, or with a stale schema.
+  static String inferProvider(String model, String? storedProvider) {
+    final lower = model.toLowerCase();
+    if (lower.startsWith('claude-')) return 'anthropic';
+    if (lower.startsWith('gpt-') || lower.startsWith('o1') ||
+        lower.startsWith('o3') || lower.startsWith('o4') ||
+        lower.startsWith('chatgpt-')) {
+      return 'openai';
+    }
+    return storedProvider ?? 'ollama';
   }
 }
 

@@ -106,6 +106,7 @@ END;''');
     String? newTitle,
     String? newSystemPrompt,
     OllamaChatOptions? newOptions,
+    String? newProvider,
   }) async {
     await _db.update(
       'chats',
@@ -114,6 +115,7 @@ END;''');
         'chat_title': newTitle ?? chat.title,
         'system_prompt': newSystemPrompt ?? chat.systemPrompt,
         'options': newOptions?.toJson() ?? chat.options.toJson(),
+        'provider': newProvider ?? chat.provider,
       },
       where: 'chat_id = ?',
       whereArgs: [chat.id],

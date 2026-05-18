@@ -37,7 +37,7 @@ class ClaudeService extends ChatService {
   @override
   Future<List<OllamaModel>> listModels() async {
     if (!isConfigured) {
-      throw OllamaException('Claude API key not set.');
+      throw OllamaException('[Claude] API key not set.');
     }
 
     try {
@@ -65,12 +65,12 @@ class ClaudeService extends ChatService {
       }
 
       throw OllamaException(
-        HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body),
+        '[Claude] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}',
       );
     } on TimeoutException {
-      throw OllamaException('Claude API timed out.');
+      throw OllamaException('[Claude] API timed out.');
     } on SocketException {
-      throw OllamaException('Network error contacting Claude API.');
+      throw OllamaException('[Claude] Network error contacting API.');
     }
   }
 
@@ -80,7 +80,7 @@ class ClaudeService extends ChatService {
     required OllamaChat chat,
   }) async* {
     if (!isConfigured) {
-      throw OllamaException('Claude API key not set.');
+      throw OllamaException('[Claude] API key not set.');
     }
 
     final request = http.Request('POST', Uri.parse('$_baseUrl/v1/messages'));
@@ -104,15 +104,15 @@ class ClaudeService extends ChatService {
       if (response.statusCode != 200) {
         final text = await response.stream.bytesToString();
         throw OllamaException(
-          HttpErrorFormatter.formatHttpError(response.statusCode, body: text),
+          '[Claude] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: text)}',
         );
       }
 
       yield* _parseSse(response.stream, chat.model);
     } on TimeoutException {
-      throw OllamaException('Claude API timed out.');
+      throw OllamaException('[Claude] API timed out.');
     } on SocketException {
-      throw OllamaException('Network error contacting Claude API.');
+      throw OllamaException('[Claude] Network error contacting API.');
     }
   }
 
@@ -152,7 +152,7 @@ class ClaudeService extends ChatService {
             );
           } else if (type == 'error') {
             final err = event['error'] as Map<String, dynamic>?;
-            throw OllamaException(err?['message'] ?? 'Claude stream error');
+            throw OllamaException('[Claude] ${err?['message'] ?? 'stream error'}');
           }
         } on FormatException {
           continue;
