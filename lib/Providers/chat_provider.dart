@@ -290,28 +290,39 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
 
-    // Coalesce notifyListeners to at most 30 Hz so Anthropic/OpenAI
-    // single-token SSE chunks don't trigger 50+ rebuilds per second.
-    const minNotifyGap = Duration(milliseconds: 33);
-    DateTime lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
-    Timer? trailingNotify;
-    void requestNotify() {
-      trailingNotify?.cancel();
-      final now = DateTime.now();
-      if (now.difference(lastNotify) >= minNotifyGap) {
+    // Typewriter buffer: incoming tokens go into [pending]; a 16 ms timer
+    // drains characters into the displayed message at a steady pace.
+    // Drain rate scales with backlog so big bursts catch up fast while
+    // trickling tokens still feel smooth.
+    final pending = StringBuffer();
+    Timer? typewriter;
+
+    void startTypewriter() {
+      typewriter ??= Timer.periodic(const Duration(milliseconds: 16), (t) {
+        if (pending.isEmpty || streamingMessage == null) return;
+        final s = pending.toString();
+        pending.clear();
+        final n = (s.length ~/ 8).clamp(1, 24);
+        streamingMessage!.content += s.substring(0, n);
+        if (n < s.length) pending.write(s.substring(n));
         notifyListeners();
-        lastNotify = now;
-      } else {
-        trailingNotify = Timer(minNotifyGap, () {
-          notifyListeners();
-          lastNotify = DateTime.now();
-        });
+      });
+    }
+
+    void flushAll() {
+      typewriter?.cancel();
+      typewriter = null;
+      if (pending.isNotEmpty && streamingMessage != null) {
+        streamingMessage!.content += pending.toString();
+        pending.clear();
       }
     }
 
+    bool cancelled = false;
     try {
       await for (receivedMessage in stream) {
         if (_activeChatStreams.containsKey(associatedChat.id) == false) {
+          cancelled = true;
           streamingMessage?.createdAt = DateTime.now();
           return streamingMessage;
         }
@@ -321,20 +332,29 @@ class ChatProvider extends ChangeNotifier {
         }
 
         if (streamingMessage == null) {
+          // Adopt the message envelope but start with empty content so the
+          // typewriter timer is the only path that writes to it.
           streamingMessage = receivedMessage;
+          pending.write(streamingMessage.content);
+          streamingMessage.content = '';
           _activeChatStreams[associatedChat.id] = streamingMessage;
 
           if (associatedChat.id == currentChat?.id) {
             _messages.add(streamingMessage);
           }
         } else {
-          streamingMessage.content += receivedMessage.content;
+          pending.write(receivedMessage.content);
         }
 
-        requestNotify();
+        startTypewriter();
       }
     } finally {
-      trailingNotify?.cancel();
+      if (!cancelled) {
+        flushAll();
+      } else {
+        typewriter?.cancel();
+        pending.clear();
+      }
       _streamSubscriptions.remove(associatedChat.id);
     }
 
