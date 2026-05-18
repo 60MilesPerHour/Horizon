@@ -1,28 +1,32 @@
 # Horizon
 
-A customized fork of [Reins](https://github.com/ibrahimcetin/reins) — a multi-platform, open-source, privacy-first chat app for Ollama. **Horizon focuses on reliability and polish**, with fixes for networking issues, improved dark theme (OLED-optimized black), and refined UI.
+A multi-provider, multi-platform, open-source chat client built on Flutter. Talk to **Ollama** (your local models), **Claude** (Anthropic Messages API), and **OpenAI** (Chat Completions and reasoning models) from a single app — with per-conversation configs, secure on-device key storage, and an OLED-optimized dark theme.
 
-Configure system prompts, switch models mid-conversation, and fine-tune parameters (temperature, seed, context size, max tokens) — **all per-conversation, no global settings needed**. Built on Flutter with a smooth, native feel across iOS, Android, macOS, Windows, and Linux.
+Configure system prompts, switch models or providers mid-conversation, and fine-tune parameters — **all per-conversation, no global settings needed**. Native feel across iOS, Android, macOS, Windows, and Linux.
 
 Get the latest [release here](https://github.com/60MilesPerHour/Horizon/releases).
 
 ## Features
+- **Three providers, one app**: Ollama, Claude (Anthropic), OpenAI — pick any model per chat, mix providers freely in the same session history
+- **Secure API key storage**: Cloud-provider keys live in the OS keystore via `flutter_secure_storage`, never in plaintext settings
 - **Per-Conversation Configuration**: System prompt, model selection, and inference parameters (temperature, seed, context, tokens) — all configurable per chat
-- **Live Model Switching**: Change models mid-conversation without starting over
-- **Image Support**: Send and receive images inline with full compression
+- **Live Model + Provider Switching**: Change models or providers mid-conversation without starting over
+- **Smooth Streaming**: Typewriter-buffered output so bursty SSE feels fluid even on slow networks
+- **Image Support**: Send images inline (Ollama vision models, Claude, GPT-4o etc.)
 - **Message Editing & Regeneration**: Edit your messages and regenerate responses
-- **Real-Time Streaming**: See responses as they arrive, word by word
-- **Custom Models**: Save your favorite prompt + config combos as new models
+- **Custom Models** (Ollama): Save your favorite prompt + config combos as new models
 - **Responsive Design**: Optimized for mobile, tablet, and desktop — single codebase, native feel everywhere
 - **Dark Theme**: OLED-optimized true black for power and battery savings
-- **Bulletproof Networking**: Fixed timeout handling, robust error recovery, stream management
+- **Bulletproof Networking**: Tagged provider errors, timeout handling, robust stream cleanup
 
 ## About
-Horizon is a fork/customization of the original [Reins](https://github.com/ibrahimcetin/reins) project by Ibrahim Çetin, focused on stability, reliability, and polish. Major improvements include:
-- Fixed networking timeouts and stream management issues
+Horizon is a fork of the original [Reins](https://github.com/ibrahimcetin/reins) Flutter Ollama client by Ibrahim Çetin, extended into a fully multi-provider client with hardened networking and polish. Major changes from upstream:
+- Multi-provider chat backend (Ollama + Claude + OpenAI) via a unified `ChatService` abstraction
+- Self-healing per-chat provider routing (DB column + name-shape fallback)
+- Typewriter smoothing for bursty cloud-provider SSE streams
 - OLED-optimized dark theme
-- Improved error handling across API calls
-- Refined UI and responsiveness
+- Tagged provider errors for instant root-cause diagnosis
+- Per-platform CI builds via GitHub Actions
 
 ## Contributing
 Found a bug or have an idea? Issues and PRs welcome!
