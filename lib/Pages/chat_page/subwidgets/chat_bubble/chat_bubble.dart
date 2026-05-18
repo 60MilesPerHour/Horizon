@@ -30,10 +30,12 @@ final Map<String, MarkdownElementBuilder> _markdownBuilders = {
 
 class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
+  final ValueNotifier<String>? streamingContent;
 
   const ChatBubble({
     super.key,
     required this.message,
+    this.streamingContent,
   });
 
   @override
@@ -70,15 +72,16 @@ class ChatBubble extends StatelessWidget {
           child: const Text('Delete'),
         ),
       ],
-      child: _ChatBubbleBody(message: message),
+      child: _ChatBubbleBody(message: message, streamingContent: streamingContent),
     );
   }
 }
 
 class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
+  final ValueNotifier<String>? streamingContent;
 
-  const _ChatBubbleBody({super.key, required this.message});
+  const _ChatBubbleBody({super.key, required this.message, this.streamingContent});
 
   @override
   Widget build(BuildContext context) {
@@ -110,17 +113,32 @@ class _ChatBubbleBody extends StatelessWidget {
                   : Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(10.0),
             ),
-            child: MarkdownBody(
-              data: message.content,
-              selectable: true,
-              softLineBreak: true,
-              styleSheet: context.markdownStyleSheet.copyWith(
-                code: _markdownCodeStyle,
-              ),
-              builders: _markdownBuilders,
-              extensionSet: _markdownExtensionSet,
-              onTapLink: (text, href, title) => launchUrlString(href!),
-            ),
+            child: streamingContent != null
+                ? ValueListenableBuilder<String>(
+                    valueListenable: streamingContent!,
+                    builder: (context, content, _) => MarkdownBody(
+                      data: content,
+                      selectable: false,
+                      softLineBreak: true,
+                      styleSheet: context.markdownStyleSheet.copyWith(
+                        code: _markdownCodeStyle,
+                      ),
+                      builders: _markdownBuilders,
+                      extensionSet: _markdownExtensionSet,
+                      onTapLink: (text, href, title) => launchUrlString(href!),
+                    ),
+                  )
+                : MarkdownBody(
+                    data: message.content,
+                    selectable: true,
+                    softLineBreak: true,
+                    styleSheet: context.markdownStyleSheet.copyWith(
+                      code: _markdownCodeStyle,
+                    ),
+                    builders: _markdownBuilders,
+                    extensionSet: _markdownExtensionSet,
+                    onTapLink: (text, href, title) => launchUrlString(href!),
+                  ),
           ),
           Text(
             TimeOfDay.fromDateTime(message.createdAt.toLocal()).format(context),

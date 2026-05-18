@@ -21,6 +21,10 @@ class ChatProvider extends ChangeNotifier {
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
 
+  // Notifier for streaming content only — updated by the typewriter timer without
+  // calling notifyListeners(), so only the streaming bubble rebuilds (not the whole page).
+  final ValueNotifier<String> streamingContent = ValueNotifier<String>('');
+
   List<OllamaChat> _chats = [];
   List<OllamaChat> get chats => _chats;
 
@@ -87,6 +91,7 @@ class ChatProvider extends ChangeNotifier {
       subscription?.cancel();
     }
     _streamSubscriptions.clear();
+    streamingContent.dispose();
     super.dispose();
   }
 
@@ -305,7 +310,8 @@ class ChatProvider extends ChangeNotifier {
         final n = (s.length ~/ 8).clamp(1, 24);
         streamingMessage!.content += s.substring(0, n);
         if (n < s.length) pending.write(s.substring(n));
-        notifyListeners();
+        // Update only the ValueNotifier — avoids a full-page rebuild every 16 ms.
+        streamingContent.value = streamingMessage!.content;
       });
     }
 
@@ -315,6 +321,7 @@ class ChatProvider extends ChangeNotifier {
       if (pending.isNotEmpty && streamingMessage != null) {
         streamingMessage!.content += pending.toString();
         pending.clear();
+        streamingContent.value = streamingMessage!.content;
       }
     }
 
@@ -337,10 +344,15 @@ class ChatProvider extends ChangeNotifier {
           streamingMessage = receivedMessage;
           pending.write(streamingMessage.content);
           streamingMessage.content = '';
+          streamingContent.value = '';
           _activeChatStreams[associatedChat.id] = streamingMessage;
 
           if (associatedChat.id == currentChat?.id) {
             _messages.add(streamingMessage);
+            // One structural notify so ChatPage knows to wire the ValueNotifier
+            // to the streaming bubble. Subsequent content updates go through
+            // streamingContent directly, not notifyListeners().
+            notifyListeners();
           }
         } else {
           pending.write(receivedMessage.content);

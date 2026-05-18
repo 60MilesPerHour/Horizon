@@ -13,6 +13,7 @@ class ChatListView extends StatefulWidget {
   final bool isAwaitingReply;
   final Widget? error;
   final double? bottomPadding;
+  final ValueNotifier<String>? streamingContent;
 
   const ChatListView({
     super.key,
@@ -20,6 +21,7 @@ class ChatListView extends StatefulWidget {
     required this.isAwaitingReply,
     this.error,
     this.bottomPadding,
+    this.streamingContent,
   });
 
   @override
@@ -117,7 +119,10 @@ class _ChatListViewState extends State<ChatListView> {
                     child: ObserveSize(
                       key: Key(message.id),
                       onSizeChanged: _onMessageSizeChanged,
-                      child: ChatBubble(message: message),
+                      child: ChatBubble(
+                        message: message,
+                        streamingContent: widget.streamingContent,
+                      ),
                     ),
                   );
                 }

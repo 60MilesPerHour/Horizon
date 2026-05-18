@@ -117,6 +117,10 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether the current chat is streaming a response
   bool get isStreaming => _chatProvider.isCurrentChatStreaming;
 
+  /// Notifier for in-flight streaming content. Updated by the typewriter timer
+  /// without triggering a full page rebuild. Listen to this in the streaming bubble only.
+  ValueNotifier<String> get streamingContent => _chatProvider.streamingContent;
+
   /// Whether the current chat is thinking (waiting for response)
   bool get isThinking => _chatProvider.isCurrentChatThinking;
 

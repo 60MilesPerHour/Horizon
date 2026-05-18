@@ -95,6 +95,7 @@ class _ChatPageState extends State<ChatPage> {
         key: PageStorageKey<String>(_viewModel.currentChat?.id ?? 'empty'),
         messages: _viewModel.messages,
         isAwaitingReply: _viewModel.isThinking,
+        streamingContent: _viewModel.isStreaming ? _viewModel.streamingContent : null,
         error: _viewModel.currentError != null
             ? ChatError(
                 message: _viewModel.currentError!.message,
