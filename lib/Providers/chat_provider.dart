@@ -293,6 +293,12 @@ class ChatProvider extends ChangeNotifier {
     // Send a notification to inform generation begin
     NotificationCenter().postNotification(NotificationNames.generationBegin);
 
+    // Reset the streaming buffer before the next response starts. Without
+    // this, the notifier still holds the previous assistant's final text;
+    // any bubble that listens to it during the "Thinking" window would
+    // paint that stale content instead of its own message.content.
+    streamingContent.value = '';
+
     // Clear the active chat streams to cancel the previous stream
     _activeChatStreams.remove(associatedChat.id);
 

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:horizon/Models/ollama_message.dart';
+import 'package:horizon/Models/ollama_message.dart' show OllamaMessage, OllamaMessageRole;
 import 'package:shimmer/shimmer.dart';
 import 'package:notification_centre/notification_centre.dart';
 
@@ -134,9 +134,16 @@ class _ChatListViewState extends State<ChatListView> {
               itemCount: widget.messages.length,
               itemBuilder: (context, index) {
                 final message = widget.messages[widget.messages.length - index - 1];
-                // Only the bottom-most message (index 0 in reverse order) gets
-                // the streamingContent notifier — that's where live tokens land.
-                final notifier = (index == 0) ? widget.streamingContent : null;
+                // Only attach the streamingContent notifier when the bottom
+                // message is the in-flight ASSISTANT response. Without the
+                // role check, a freshly-sent user prompt at index 0 would
+                // attach the notifier and paint the previous response's
+                // leftover text on top of the user's actual prompt during
+                // the gap before the first token arrives.
+                final notifier = (index == 0 &&
+                        message.role == OllamaMessageRole.assistant)
+                    ? widget.streamingContent
+                    : null;
                 return RepaintBoundary(
                   key: ValueKey(message.id),
                   child: ChatBubble(
