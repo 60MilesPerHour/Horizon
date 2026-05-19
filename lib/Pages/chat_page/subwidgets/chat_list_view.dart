@@ -105,6 +105,14 @@ class _ChatListViewState extends State<ChatListView> {
         CustomScrollView(
           controller: _scrollController,
           reverse: true,
+          // Default cacheExtent (250 px) is far too small for long story-
+          // length messages — bubbles fall out of cache during fast scroll
+          // and have to re-parse their markdown on re-entry, which is what
+          // the user sees as "text goes bye, animates back when scroll
+          // stops." 2000 px keeps several screens worth of bubbles built
+          // ahead of the viewport. AutomaticKeepAlive in ChatBubble handles
+          // the rest by preserving already-built bubbles past the cache edge.
+          cacheExtent: 2000,
           // Inherit platform-default physics (Clamping + stretch overscroll
           // on Android, Bouncing on iOS/macOS). Hard-coding BouncingScrollPhysics
           // here made Android feel un-Material; remove the override.

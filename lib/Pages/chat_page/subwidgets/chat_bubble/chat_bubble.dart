@@ -28,7 +28,7 @@ final Map<String, MarkdownElementBuilder> _markdownBuilders = {
   'think': ThinkBlockBuilder(),
 };
 
-class ChatBubble extends StatelessWidget {
+class ChatBubble extends StatefulWidget {
   final OllamaMessage message;
   final ValueNotifier<String>? streamingContent;
 
@@ -39,7 +39,28 @@ class ChatBubble extends StatelessWidget {
   });
 
   @override
+  State<ChatBubble> createState() => _ChatBubbleState();
+}
+
+class _ChatBubbleState extends State<ChatBubble>
+    with AutomaticKeepAliveClientMixin<ChatBubble> {
+  // Once a bubble has been built (and its MarkdownBody parsed), keep it in
+  // memory even when scrolled out of the cache extent. Without this, fast
+  // scrolling causes bubbles to be destroyed and re-parsed from scratch on
+  // re-entry, which manifests as text disappearing during scroll and
+  // "cascading" back in one bubble at a time once scroll stops.
+  //
+  // Streaming bubbles intentionally don't keep alive — they rebuild every
+  // typewriter tick by design via the ValueListenableBuilder, and keeping
+  // them alive offers no benefit. Static bubbles are the expensive ones.
+  @override
+  bool get wantKeepAlive => widget.streamingContent == null;
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context); // required by AutomaticKeepAliveClientMixin
+    final message = widget.message;
+    final streamingContent = widget.streamingContent;
     final actions = ChatBubbleActions(message);
 
     return ChatBubbleMenu(
