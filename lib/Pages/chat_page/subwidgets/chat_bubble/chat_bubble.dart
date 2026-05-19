@@ -138,7 +138,14 @@ class _ChatBubbleBody extends StatelessWidget {
                 ? _StreamingText(notifier: streamingContent!)
                 : MarkdownBody(
                     data: message.content,
-                    selectable: true,
+                    // selectable: true wraps the body in SelectableText, whose
+                    // gesture recognizer fights the parent Scrollable in the
+                    // gesture arena — scroll attempts that start on a bubble
+                    // intermittently get swallowed by text-selection logic.
+                    // The long-press menu's "Select Text" option already opens
+                    // a dedicated SelectableText sheet, so the bubble itself
+                    // doesn't need to be selectable.
+                    selectable: false,
                     softLineBreak: true,
                     styleSheet: context.markdownStyleSheet.copyWith(
                       code: _markdownCodeStyle,
