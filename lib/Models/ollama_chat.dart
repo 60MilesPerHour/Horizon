@@ -127,7 +127,7 @@ class OllamaChatOptions {
   })  : mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
         mirostatTau = mirostatTau ?? 5.0,
-        contextSize = contextSize ?? 2048,
+        contextSize = contextSize ?? 0,
         repeatLastN = repeatLastN ?? 64,
         repeatPenalty = repeatPenalty ?? 1.1,
         temperature = temperature ?? 0.8,
@@ -144,7 +144,11 @@ class OllamaChatOptions {
       mirostat: map['mirostat'],
       mirostatEta: map['mirostat_eta']?.toDouble(),
       mirostatTau: map['mirostat_tau']?.toDouble(),
-      contextSize: map['num_ctx'],
+      // Pre-v3.2.1 chats baked in the old default of 2048, which forced Ollama
+      // to unload/reload models that were running at a different context size.
+      // Treat 2048 from disk as "use server default" so the override doesn't
+      // silently override.
+      contextSize: map['num_ctx'] == 2048 ? 0 : map['num_ctx'],
       repeatLastN: map['repeat_last_n'],
       repeatPenalty: map['repeat_penalty']?.toDouble(),
       temperature: map['temperature']?.toDouble(),
@@ -168,7 +172,7 @@ class OllamaChatOptions {
       'mirostat': mirostat,
       'mirostat_eta': mirostatEta,
       'mirostat_tau': mirostatTau,
-      'num_ctx': contextSize,
+      if (contextSize > 0) 'num_ctx': contextSize,
       'repeat_last_n': repeatLastN,
       'repeat_penalty': repeatPenalty,
       'temperature': temperature,

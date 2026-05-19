@@ -157,9 +157,9 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
             initialValue: _chatOptions.contextSize,
             labelText: 'Context Size',
             infoText:
-                'Size of the context window used to generate the next token. A larger context size results in more coherent text.',
+                'Size of the context window. Leave at 0 to use whatever your server has loaded (recommended) — Ollama otherwise unloads and reloads the model to honour this override.',
             type: _BottomSheetTextFieldType.number,
-            onChanged: (v) => _chatOptions.contextSize = v ?? 2048,
+            onChanged: (v) => _chatOptions.contextSize = v ?? 0,
           ),
           const SizedBox(height: 16),
           _BottomSheetTextField(
