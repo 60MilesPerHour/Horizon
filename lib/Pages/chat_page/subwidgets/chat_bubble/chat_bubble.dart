@@ -32,10 +32,17 @@ class ChatBubble extends StatefulWidget {
   final OllamaMessage message;
   final ValueNotifier<String>? streamingContent;
 
+  /// Whether this bubble should persist its built state when scrolled out
+  /// of the cache extent. The caller (ChatListView) decides this per-bubble
+  /// so memory doesn't grow unbounded in long chats — see the depth cap in
+  /// the SliverList builder.
+  final bool keepAlive;
+
   const ChatBubble({
     super.key,
     required this.message,
     this.streamingContent,
+    this.keepAlive = false,
   });
 
   @override
@@ -44,17 +51,21 @@ class ChatBubble extends StatefulWidget {
 
 class _ChatBubbleState extends State<ChatBubble>
     with AutomaticKeepAliveClientMixin<ChatBubble> {
-  // Once a bubble has been built (and its MarkdownBody parsed), keep it in
-  // memory even when scrolled out of the cache extent. Without this, fast
-  // scrolling causes bubbles to be destroyed and re-parsed from scratch on
-  // re-entry, which manifests as text disappearing during scroll and
-  // "cascading" back in one bubble at a time once scroll stops.
-  //
-  // Streaming bubbles intentionally don't keep alive — they rebuild every
-  // typewriter tick by design via the ValueListenableBuilder, and keeping
-  // them alive offers no benefit. Static bubbles are the expensive ones.
+  // Recent bubbles keep their built widget tree (incl. parsed MarkdownBody)
+  // so a quick scroll-up doesn't trigger a re-parse cascade. Older bubbles
+  // get released to keep the heap bounded — accumulating hundreds of
+  // parsed-markdown trees was driving Dart's major GC into multi-second
+  // pauses ("UI freezes randomly / after sitting").
   @override
-  bool get wantKeepAlive => widget.streamingContent == null;
+  bool get wantKeepAlive => widget.keepAlive;
+
+  @override
+  void didUpdateWidget(covariant ChatBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.keepAlive != widget.keepAlive) {
+      updateKeepAlive();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

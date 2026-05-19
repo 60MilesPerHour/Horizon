@@ -152,11 +152,20 @@ class _ChatListViewState extends State<ChatListView> {
                         message.role == OllamaMessageRole.assistant)
                     ? widget.streamingContent
                     : null;
+                // Cap keep-alive to roughly the most recent ~30 messages
+                // (index is counted from the visual bottom). Without a cap,
+                // every bubble the user has ever scrolled past stays in
+                // memory, and the accumulated MarkdownBody trees trigger
+                // multi-second GC pauses that look like the UI freezing.
+                // Streaming bubble doesn't need keep-alive — it rebuilds on
+                // its own notifier and is always at the bottom anyway.
+                final shouldKeepAlive = notifier == null && index < 30;
                 return RepaintBoundary(
                   key: ValueKey(message.id),
                   child: ChatBubble(
                     message: message,
                     streamingContent: notifier,
+                    keepAlive: shouldKeepAlive,
                   ),
                 );
               },
