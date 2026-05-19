@@ -2,6 +2,7 @@ import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_service.dart';
 import 'package:horizon/Services/claude_service.dart';
+import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/openai_service.dart';
 
@@ -10,11 +11,13 @@ class ChatServiceRegistry {
   final OllamaService ollama;
   final ClaudeService claude;
   final OpenAIService openai;
+  final GeminiService gemini;
 
   ChatServiceRegistry({
     required this.ollama,
     required this.claude,
     required this.openai,
+    required this.gemini,
   });
 
   ChatService resolve(String provider) {
@@ -23,6 +26,8 @@ class ChatServiceRegistry {
         return claude;
       case 'openai':
         return openai;
+      case 'google':
+        return gemini;
       case 'ollama':
       default:
         return ollama;
@@ -31,7 +36,7 @@ class ChatServiceRegistry {
 
   ChatService forChat(OllamaChat chat) => resolve(chat.provider);
 
-  List<ChatService> get all => [ollama, claude, openai];
+  List<ChatService> get all => [ollama, claude, openai, gemini];
 
   /// Fetch models from every configured provider. Failures are swallowed
   /// per-provider so one bad key doesn't hide the rest.

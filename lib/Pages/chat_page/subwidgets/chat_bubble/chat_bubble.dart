@@ -114,20 +114,7 @@ class _ChatBubbleBody extends StatelessWidget {
               borderRadius: BorderRadius.circular(10.0),
             ),
             child: streamingContent != null
-                ? ValueListenableBuilder<String>(
-                    valueListenable: streamingContent!,
-                    builder: (context, content, _) => MarkdownBody(
-                      data: content,
-                      selectable: false,
-                      softLineBreak: true,
-                      styleSheet: context.markdownStyleSheet.copyWith(
-                        code: _markdownCodeStyle,
-                      ),
-                      builders: _markdownBuilders,
-                      extensionSet: _markdownExtensionSet,
-                      onTapLink: (text, href, title) => launchUrlString(href!),
-                    ),
-                  )
+                ? _StreamingText(notifier: streamingContent!)
                 : MarkdownBody(
                     data: message.content,
                     selectable: true,
@@ -160,4 +147,30 @@ class _ChatBubbleBody extends StatelessWidget {
   /// Otherwise, the alignment is [Alignment.centerLeft].
   CrossAxisAlignment get bubbleAlignment =>
       isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+}
+
+/// Plain-text view of the in-flight streaming response.
+///
+/// During streaming the message can grow to thousands of characters; piping
+/// every typewriter tick through `flutter_markdown` reparses the entire string
+/// each frame and creates the "slideshow" feel. Render as raw text while the
+/// stream runs, then `ChatBubble` swaps to `MarkdownBody` once the notifier is
+/// detached (i.e., generation finished).
+class _StreamingText extends StatelessWidget {
+  final ValueNotifier<String> notifier;
+
+  const _StreamingText({required this.notifier});
+
+  @override
+  Widget build(BuildContext context) {
+    final baseStyle = Theme.of(context).textTheme.bodyMedium;
+    return ValueListenableBuilder<String>(
+      valueListenable: notifier,
+      builder: (context, content, _) => Text(
+        content,
+        softWrap: true,
+        style: baseStyle,
+      ),
+    );
+  }
 }

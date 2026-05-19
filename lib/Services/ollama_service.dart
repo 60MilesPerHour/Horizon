@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:horizon/Utils/http_error_formatter.dart';
@@ -16,47 +17,96 @@ class OllamaService extends ChatService {
   @override
   String get providerId => 'ollama';
 
-  /// True only when the user has set a non-empty server address.
+  /// True only when the user has set a non-empty primary server address.
   /// Without this we'd always try localhost and dirty the model list.
   bool _userSetAddress = false;
 
   @override
   bool get isConfigured => _userSetAddress;
 
-  /// The base URL for the Ollama service API.
-  ///
-  /// This URL is used as the root endpoint for all network requests
-  /// made by the Ollama service. It should be set to the base address
-  /// of the API server.
-  ///
-  /// The default value is "http://localhost:11434".
+  /// Primary URL. Tried first on every request.
   String _baseUrl;
-  String get baseUrl => _baseUrl;
+
+  /// Optional backup URL. Used when the primary fails with a network error.
+  /// Common case: primary is a home-LAN address, backup is a Tailscale/VPN
+  /// hostname for when the user is off-network. Whichever connects first
+  /// becomes the active URL for subsequent requests until it fails.
+  String? _backupUrl;
+
+  /// Tracks which URL most recently succeeded. Subsequent requests try this
+  /// first to avoid wasting a round-trip on the known-down endpoint.
+  String? _activeUrl;
+
+  String get baseUrl => _activeUrl ?? _baseUrl;
+
   set baseUrl(String? value) {
     _userSetAddress = value != null && value.isNotEmpty;
     _baseUrl = (value == null || value.isEmpty) ? "http://localhost:11434" : value;
+    _activeUrl = null;
+  }
+
+  String? get backupUrl => _backupUrl;
+
+  set backupUrl(String? value) {
+    _backupUrl = (value == null || value.isEmpty) ? null : value;
+    _activeUrl = null;
   }
 
   /// The headers to include in all network requests.
   final headers = {'Content-Type': 'application/json'};
 
   /// Creates a new instance of the Ollama service.
-  OllamaService({String? baseUrl})
+  OllamaService({String? baseUrl, String? backupUrl})
       : _baseUrl = baseUrl ?? "http://localhost:11434",
+        _backupUrl = (backupUrl == null || backupUrl.isEmpty) ? null : backupUrl,
         _userSetAddress = baseUrl != null && baseUrl.isNotEmpty;
 
-  /// Constructs a URL by resolving the provided path against the base URL.
-  Uri constructUrl(String path) {
-    final baseUri = Uri.parse(baseUrl);
+  /// Ordered list of URLs to try for the next request. Starts with whichever
+  /// last succeeded, then falls back to the other(s). Always non-empty.
+  List<String> _urlsToTry() {
+    final urls = <String>{};
+    if (_activeUrl != null) urls.add(_activeUrl!);
+    urls.add(_baseUrl);
+    if (_backupUrl != null) urls.add(_backupUrl!);
+    return urls.toList();
+  }
 
-    // Split the base URI path into segments, filtering out empty strings
+  /// Constructs a URL by resolving the provided path against a given base.
+  Uri _build(String base, String path) {
+    final baseUri = Uri.parse(base);
     final segments = baseUri.pathSegments.where((s) => s.isNotEmpty).toList();
-
-    // Split the provided path into segments, filtering out empty strings
     final extraSegments = path.split('/').where((s) => s.isNotEmpty).toList();
-
-    // Combine both sets of segments and create a new URI
     return baseUri.replace(pathSegments: [...segments, ...extraSegments]);
+  }
+
+  /// Backward-compatible single-URL builder, against the active base URL.
+  Uri constructUrl(String path) => _build(baseUrl, path);
+
+  /// Runs [op] against each candidate URL until one succeeds or all fail
+  /// with network-level errors. Higher-level HTTP failures (non-200) are
+  /// surfaced from whichever URL was active when they happened — they do
+  /// NOT trigger failover, because they imply the server is reachable but
+  /// rejecting the request.
+  Future<T> _withFailover<T>(Future<T> Function(String base) op) async {
+    Object? lastError;
+    StackTrace? lastStack;
+    for (final url in _urlsToTry()) {
+      try {
+        final result = await op(url);
+        _activeUrl = url;
+        return result;
+      } on SocketException catch (e, st) {
+        lastError = e;
+        lastStack = st;
+      } on TimeoutException catch (e, st) {
+        lastError = e;
+        lastStack = st;
+      } on HttpException catch (e, st) {
+        lastError = e;
+        lastStack = st;
+      }
+    }
+    Error.throwWithStackTrace(lastError ?? OllamaException('[Ollama] No server reachable.'), lastStack ?? StackTrace.current);
   }
 
   /// Generates an OllamaMessage.
@@ -73,9 +123,8 @@ class OllamaService extends ChatService {
     String prompt, {
     required OllamaChat chat,
   }) async {
-    final url = constructUrl("/api/generate");
-
-    try {
+    return _withFailover((base) async {
+      final url = _build(base, "/api/generate");
       final response = await http.post(
         url,
         headers: headers,
@@ -104,46 +153,38 @@ class OllamaService extends ChatService {
       } else {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
-    }
+    });
   }
 
   Stream<OllamaMessage> generateStream(
     String prompt, {
     required OllamaChat chat,
   }) async* {
-    final url = constructUrl('/api/generate');
-
-    final request = http.Request("POST", url);
-    request.headers.addAll(headers);
-    request.body = json.encode({
-      "model": chat.model,
-      "prompt": prompt,
-      "system": chat.systemPrompt,
-      "options": chat.options.toMap(),
-      "stream": true,
-    });
-
-    try {
-      final response = await request.send().timeout(Duration(seconds: 30), onTimeout: () {
+    final response = await _withFailover((base) async {
+      final url = _build(base, '/api/generate');
+      final request = http.Request("POST", url);
+      request.headers.addAll(headers);
+      request.body = json.encode({
+        "model": chat.model,
+        "prompt": prompt,
+        "system": chat.systemPrompt,
+        "options": chat.options.toMap(),
+        "stream": true,
+      });
+      return request.send().timeout(Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Request timed out');
       });
+    });
 
-      if (response.statusCode == 200) {
-        await for (final message in _processStream(response.stream)) {
-          yield message;
-        }
-      } else if (response.statusCode == 404) {
-        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
-      } else if (response.statusCode == 500) {
-        throw OllamaException("Internal server error.");
-      } else {
-        final body = await response.stream.bytesToString();
-        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
-      }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
+    if (response.statusCode == 200) {
+      yield* _processStream(response.stream);
+    } else if (response.statusCode == 404) {
+      throw OllamaException("[Ollama] ${chat.model} not found on the server.");
+    } else if (response.statusCode == 500) {
+      throw OllamaException("Internal server error.");
+    } else {
+      final body = await response.stream.bytesToString();
+      throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
     }
   }
 
@@ -161,15 +202,15 @@ class OllamaService extends ChatService {
     List<OllamaMessage> messages, {
     required OllamaChat chat,
   }) async {
-    final url = constructUrl("/api/chat");
-
-    try {
+    final encoded = await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt);
+    return _withFailover((base) async {
+      final url = _build(base, "/api/chat");
       final response = await http.post(
         url,
         headers: headers,
         body: json.encode({
           "model": chat.model,
-          "messages": await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt),
+          "messages": encoded,
           "options": chat.options.toMap(),
           "stream": false,
         }),
@@ -191,45 +232,38 @@ class OllamaService extends ChatService {
       } else {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
-    }
+    });
   }
 
   Stream<OllamaMessage> chatStream(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
   }) async* {
-    final url = constructUrl('/api/chat');
-
-    final request = http.Request("POST", url);
-    request.headers.addAll(headers);
-    request.body = json.encode({
-      "model": chat.model,
-      "messages": await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt),
-      "options": chat.options.toMap(),
-      "stream": true,
-    });
-
-    try {
-      final response = await request.send().timeout(Duration(seconds: 30), onTimeout: () {
+    final encoded = await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt);
+    final response = await _withFailover((base) async {
+      final url = _build(base, '/api/chat');
+      final request = http.Request("POST", url);
+      request.headers.addAll(headers);
+      request.body = json.encode({
+        "model": chat.model,
+        "messages": encoded,
+        "options": chat.options.toMap(),
+        "stream": true,
+      });
+      return request.send().timeout(Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Request timed out');
       });
+    });
 
-      if (response.statusCode == 200) {
-        await for (final message in _processStream(response.stream)) {
-          yield message;
-        }
-      } else if (response.statusCode == 404) {
-        throw OllamaException("[Ollama] ${chat.model} not found on the server.");
-      } else if (response.statusCode == 500) {
-        throw OllamaException("Internal server error.");
-      } else {
-        final body = await response.stream.bytesToString();
-        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
-      }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
+    if (response.statusCode == 200) {
+      yield* _processStream(response.stream);
+    } else if (response.statusCode == 404) {
+      throw OllamaException("[Ollama] ${chat.model} not found on the server.");
+    } else if (response.statusCode == 500) {
+      throw OllamaException("Internal server error.");
+    } else {
+      final body = await response.stream.bytesToString();
+      throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
     }
   }
 
@@ -289,9 +323,8 @@ class OllamaService extends ChatService {
 
   /// Fetches the list of models from /api/tags
   Future<ApiTagsResponse> _fetchTags() async {
-    final url = constructUrl("/api/tags");
-
-    try {
+    return _withFailover((base) async {
+      final url = _build(base, "/api/tags");
       final response = await http.get(url, headers: headers).timeout(Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Request timed out');
       });
@@ -308,18 +341,18 @@ class OllamaService extends ChatService {
       } else {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
-    }
+    });
   }
 
   /// Fetches detailed model information from /api/show
   ///
   /// Returns null if the endpoint is unavailable or returns an error.
-  /// This ensures graceful degradation for older Ollama versions.
+  /// This ensures graceful degradation for older Ollama versions. /api/show
+  /// is informational, so we DON'T fail over here — we just hit whichever URL
+  /// the registry has settled on.
   Future<ApiShowResponse?> _showModel(String name) async {
     try {
-      final url = constructUrl("/api/show");
+      final url = _build(baseUrl, "/api/show");
 
       final response = await http.post(
         url,
@@ -349,19 +382,19 @@ class OllamaService extends ChatService {
     required OllamaChat chat,
     List<OllamaMessage>? messages,
   }) async {
-    final url = constructUrl("/api/create");
-
     final request = ApiCreateRequest.fromChat(
       model,
       chat: chat,
       messages: messages,
     );
+    final encoded = json.encode(await request.toJson());
 
-    try {
+    await _withFailover((base) async {
+      final url = _build(base, "/api/create");
       final response = await http.post(
         url,
         headers: headers,
-        body: json.encode(await request.toJson()),
+        body: encoded,
       ).timeout(Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Request timed out');
       });
@@ -373,15 +406,12 @@ class OllamaService extends ChatService {
       } else {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
-    }
+    });
   }
 
   Future<void> deleteModel(String model) async {
-    final url = constructUrl("/api/delete");
-
-    try {
+    await _withFailover((base) async {
+      final url = _build(base, "/api/delete");
       final response = await http.delete(
         url,
         headers: headers,
@@ -399,8 +429,6 @@ class OllamaService extends ChatService {
       } else {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
-    } on TimeoutException {
-      throw OllamaException("Request timed out. Check your network connection.");
-    }
+    });
   }
 }

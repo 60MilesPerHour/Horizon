@@ -175,9 +175,10 @@ class _GroupedModelList extends StatelessWidget {
     'ollama': 'Ollama',
     'anthropic': 'Claude',
     'openai': 'OpenAI',
+    'google': 'Gemini',
   };
 
-  static const _providerOrder = ['ollama', 'anthropic', 'openai'];
+  static const _providerOrder = ['ollama', 'anthropic', 'openai', 'google'];
 
   @override
   Widget build(BuildContext context) {

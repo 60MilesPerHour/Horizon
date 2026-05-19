@@ -116,7 +116,13 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> _loadCurrentChat() async {
-    _messages = await _databaseService.getMessages(currentChat!.id);
+    // Clear synchronously BEFORE the await so callers that notify before this
+    // future resolves don't render the previous chat's messages under the
+    // new chat header. See createNewChat() for the matching guard.
+    _messages = [];
+
+    final loaded = await _databaseService.getMessages(currentChat!.id);
+    _messages = loaded;
 
     // Add the streaming message to the chat if it exists
     final streamingMessage = _activeChatStreams[currentChat!.id];
@@ -135,6 +141,12 @@ class ChatProvider extends ChangeNotifier {
       model.name,
       provider: model.provider,
     );
+
+    // Drop any messages still resident from the previously-selected chat
+    // BEFORE notifying. Without this, the UI rebuilds with the new chat's
+    // currentChat but the prior chat's _messages list, flashing the stale
+    // conversation for one frame on send.
+    _messages = [];
 
     _chats.insert(0, chat);
     _currentChatIndex = 0;
@@ -455,9 +467,11 @@ class ChatProvider extends ChangeNotifier {
   void _bindOllamaServerAddress() {
     final settingsBox = Hive.box('settings');
     _registry.ollama.baseUrl = settingsBox.get('serverAddress');
+    _registry.ollama.backupUrl = settingsBox.get('serverAddressBackup');
 
-    settingsBox.listenable(keys: ["serverAddress"]).addListener(() {
+    settingsBox.listenable(keys: ["serverAddress", "serverAddressBackup"]).addListener(() {
       _registry.ollama.baseUrl = settingsBox.get('serverAddress');
+      _registry.ollama.backupUrl = settingsBox.get('serverAddressBackup');
 
       // This will update empty chat state to dismiss "Tap to configure server address" message
       notifyListeners();

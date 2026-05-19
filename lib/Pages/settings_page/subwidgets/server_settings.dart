@@ -24,11 +24,14 @@ class _ServerSettingsState extends State<ServerSettings> {
   final _settingsBox = Hive.box('settings');
 
   final _serverAddressController = TextEditingController();
+  final _backupAddressController = TextEditingController();
 
   OllamaRequestState _requestState = OllamaRequestState.uninitialized;
+  OllamaRequestState _backupRequestState = OllamaRequestState.uninitialized;
   get _isLoading => _requestState == OllamaRequestState.loading;
 
   String? _serverAddressErrorText;
+  String? _backupAddressErrorText;
 
   @override
   void initState() {
@@ -39,16 +42,22 @@ class _ServerSettingsState extends State<ServerSettings> {
 
   _initialize() {
     final serverAddress = _settingsBox.get('serverAddress');
+    final backupAddress = _settingsBox.get('serverAddressBackup');
 
     if (serverAddress != null) {
       _serverAddressController.text = serverAddress;
       _handleConnectButton();
+    }
+    if (backupAddress != null) {
+      _backupAddressController.text = backupAddress;
+      _handleBackupConnectButton();
     }
   }
 
   @override
   void dispose() {
     _serverAddressController.dispose();
+    _backupAddressController.dispose();
 
     super.dispose();
   }
@@ -111,8 +120,95 @@ class _ServerSettingsState extends State<ServerSettings> {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _backupAddressController,
+          keyboardType: TextInputType.url,
+          onChanged: (_) {
+            setState(() {
+              _backupAddressErrorText = null;
+              _backupRequestState = OllamaRequestState.uninitialized;
+            });
+          },
+          decoration: InputDecoration(
+            labelText: 'Backup Server Address (optional)',
+            helperText: 'Tried when the primary is unreachable. Use this for a VPN/Tailscale address so home-LAN hosts stay private.',
+            helperMaxLines: 3,
+            border: const OutlineInputBorder(),
+            errorText: _backupAddressErrorText,
+          ),
+          onTapOutside: (PointerDownEvent event) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: ElevatedButton(
+            onPressed: _isLoading ? null : _handleBackupConnectButton,
+            child: _ConnectionStatusIndicator(
+              color: _backupConnectionStatusColor,
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  Color get _backupConnectionStatusColor {
+    switch (_backupRequestState) {
+      case OllamaRequestState.error:
+        return Colors.red;
+      case OllamaRequestState.loading:
+        return Colors.orange;
+      case OllamaRequestState.success:
+        return Colors.green;
+      case OllamaRequestState.uninitialized:
+        return Colors.grey;
+    }
+  }
+
+  _handleBackupConnectButton() async {
+    setState(() {
+      _backupAddressErrorText = null;
+      _backupRequestState = OllamaRequestState.loading;
+    });
+
+    final raw = _backupAddressController.text.trim();
+    if (raw.isEmpty) {
+      // Treat clearing the field as "remove backup".
+      _settingsBox.delete('serverAddressBackup');
+      setState(() => _backupRequestState = OllamaRequestState.uninitialized);
+      return;
+    }
+
+    try {
+      final newAddress = _validateServerAddress(raw);
+      final result = await _establishServerConnection(Uri.parse(newAddress));
+
+      if (!mounted) return;
+
+      _backupRequestState = result.$1;
+      final state = result.$1;
+      final addr = result.$2.toString();
+      final current = _settingsBox.get('serverAddressBackup');
+      // Persist the address even on failure so the user's choice survives
+      // a no-network moment; failover will still try it on the next request.
+      if (addr != current) {
+        _settingsBox.put('serverAddressBackup', addr);
+      }
+      if (state == OllamaRequestState.error) {
+        _backupAddressErrorText = 'Could not reach backup right now (will retry on failover).';
+      }
+    } on OllamaException catch (e) {
+      _backupAddressErrorText = e.message;
+      _backupRequestState = OllamaRequestState.error;
+    } catch (_) {
+      _backupAddressErrorText = 'Invalid URL format. Use: http(s)://<host>:<port>';
+      _backupRequestState = OllamaRequestState.error;
+    } finally {
+      if (mounted) setState(() {});
+    }
   }
 
   Color get _connectionStatusColor {

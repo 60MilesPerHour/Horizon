@@ -47,6 +47,11 @@ class OllamaChat {
         lower.startsWith('chatgpt-')) {
       return 'openai';
     }
+    if (lower.startsWith('gemini-') ||
+        lower.startsWith('models/gemini-') ||
+        lower.startsWith('gemma-')) {
+      return 'google';
+    }
     return storedProvider ?? 'ollama';
   }
 }

@@ -5,9 +5,13 @@ import 'package:notification_centre/notification_centre.dart';
 
 import 'chat_bubble/chat_bubble.dart';
 import 'package:horizon/Constants/constants.dart';
-import 'package:horizon/Utils/observe_size.dart';
-import 'package:horizon/Utils/retained_position_scroll_physics.dart';
 
+/// Stick-to-bottom chat list.
+///
+/// Uses a plain `reverse: true` ListView — offset 0 IS the visual bottom, so
+/// content growth at the bottom keeps the user pinned automatically. The
+/// streaming bubble rebuilds via a ValueNotifier in [ChatBubble], so the rest
+/// of the list never repaints during a token stream.
 class ChatListView extends StatefulWidget {
   final List<OllamaMessage> messages;
   final bool isAwaitingReply;
@@ -30,46 +34,68 @@ class ChatListView extends StatefulWidget {
 
 class _ChatListViewState extends State<ChatListView> {
   final ScrollController _scrollController = ScrollController();
-  bool _isScrollToBottomButtonVisible = false;
 
-  final _messageSizeProxy = WidgetSizeProxy();
+  /// User is considered "at the bottom" when their scroll offset is within
+  /// this many pixels of 0 (which, in a reverse list, is the visual bottom).
+  static const double _bottomThreshold = 80.0;
+
+  /// True when the scroll-to-bottom button should be visible.
+  bool _showScrollButton = false;
 
   @override
   void initState() {
     super.initState();
 
-    _scrollController.addListener(() {
-      _updateScrollToBottomButtonVisibility();
-    });
+    _scrollController.addListener(_onScroll);
 
+    // When the user fires off a new prompt, slide them down to the bottom so
+    // they see the newly-sent message and the incoming response. Mid-stream
+    // growth is handled by `reverse: true` itself — offset 0 naturally tracks
+    // the latest content, no per-tick snapping required.
     NotificationCenter().addObserver(
       NotificationNames.generationBegin,
       this,
-      (n) => _scrollToBottom(),
+      (n) => _snapToBottom(animated: true),
     );
   }
 
   @override
   void didUpdateWidget(covariant ChatListView oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    // Add to the post frame callback to ensure that the scroll offset is
-    // read after the widget has been updated.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Update the button visibility when the user switches chats,
-      // regenerates a message or delete a message.
-      _updateScrollToBottomButtonVisibility();
-    });
+    // On chat switch / message edits, recompute button visibility.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
   }
 
   @override
   void dispose() {
-    _scrollController.dispose();
-
-    // Remove the observer for the generation begin notification
     NotificationCenter().removeObserver(NotificationNames.generationBegin, this);
-
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final offset = _scrollController.position.pixels;
+    final nearBottom = offset <= _bottomThreshold;
+
+    final shouldShow = !nearBottom;
+    if (shouldShow != _showScrollButton) {
+      setState(() => _showScrollButton = shouldShow);
+    }
+  }
+
+  void _snapToBottom({bool animated = false}) {
+    if (!_scrollController.hasClients) return;
+    if (animated) {
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    } else {
+      _scrollController.jumpTo(0.0);
+    }
+    if (_showScrollButton) setState(() => _showScrollButton = false);
   }
 
   @override
@@ -80,9 +106,8 @@ class _ChatListViewState extends State<ChatListView> {
         CustomScrollView(
           controller: _scrollController,
           reverse: true,
-          cacheExtent: 800,
-          physics: RetainedPositionScrollPhysics(
-            widgetSizeProxy: _messageSizeProxy,
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
           ),
           slivers: [
             if (widget.bottomPadding != null)
@@ -90,13 +115,10 @@ class _ChatListViewState extends State<ChatListView> {
                 padding: EdgeInsets.only(bottom: widget.bottomPadding!),
               ),
             if (widget.error != null)
-              SliverToBoxAdapter(
-                child: widget.error,
-              ),
+              SliverToBoxAdapter(child: widget.error),
             if (widget.isAwaitingReply)
               SliverToBoxAdapter(
                 child: Shimmer.fromColors(
-                  // TODO: Play with the colors to make it look better
                   baseColor: Theme.of(context).colorScheme.onPrimary,
                   highlightColor: Theme.of(context).colorScheme.onSurface,
                   period: const Duration(milliseconds: 2500),
@@ -109,69 +131,35 @@ class _ChatListViewState extends State<ChatListView> {
                 ),
               ),
             SliverList.builder(
-              key: widget.key,
               itemCount: widget.messages.length,
               itemBuilder: (context, index) {
                 final message = widget.messages[widget.messages.length - index - 1];
-
-                if (index == 0) {
-                  return RepaintBoundary(
-                    child: ObserveSize(
-                      key: Key(message.id),
-                      onSizeChanged: _onMessageSizeChanged,
-                      child: ChatBubble(
-                        message: message,
-                        streamingContent: widget.streamingContent,
-                      ),
-                    ),
-                  );
-                }
-
+                // Only the bottom-most message (index 0 in reverse order) gets
+                // the streamingContent notifier — that's where live tokens land.
+                final notifier = (index == 0) ? widget.streamingContent : null;
                 return RepaintBoundary(
-                  key: Key(message.id),
-                  child: ChatBubble(message: message),
+                  key: ValueKey(message.id),
+                  child: ChatBubble(
+                    message: message,
+                    streamingContent: notifier,
+                  ),
                 );
               },
             ),
           ],
         ),
-        if (_isScrollToBottomButtonVisible)
-          IconButton(
-            onPressed: _scrollToBottom,
-            icon: const Icon(Icons.arrow_downward_rounded),
-            style: IconButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.onInverseSurface,
+        if (_showScrollButton)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: IconButton(
+              onPressed: () => _snapToBottom(animated: true),
+              icon: const Icon(Icons.arrow_downward_rounded),
+              style: IconButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.onInverseSurface,
+              ),
             ),
           ),
       ],
-    );
-  }
-
-  void _onMessageSizeChanged(Size? previousSize, Size currentSize) {
-    final currentHeight = currentSize.height;
-    final previousHeight = (previousSize ?? currentSize).height;
-    _messageSizeProxy.deltaHeight = currentHeight - previousHeight;
-  }
-
-  void _updateScrollToBottomButtonVisibility() {
-    if (_scrollController.position.pixels > 100 && !_isScrollToBottomButtonVisible) {
-      setState(() {
-        _isScrollToBottomButtonVisible = true;
-      });
-    }
-
-    if (_scrollController.position.pixels < 100 && _isScrollToBottomButtonVisible) {
-      setState(() {
-        _isScrollToBottomButtonVisible = false;
-      });
-    }
-  }
-
-  void _scrollToBottom() {
-    _scrollController.animateTo(
-      0.0,
-      duration: const Duration(milliseconds: 150),
-      curve: Curves.easeOut,
     );
   }
 }

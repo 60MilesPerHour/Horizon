@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/claude_service.dart';
+import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/openai_service.dart';
 
 const _storage = FlutterSecureStorage();
@@ -30,6 +31,8 @@ class CloudProviderSettings extends StatelessWidget {
         const _AnthropicKeyField(),
         const SizedBox(height: 16),
         const _OpenAIKeyField(),
+        const SizedBox(height: 16),
+        const _GeminiKeyField(),
       ],
     );
   }
@@ -224,6 +227,92 @@ class _OpenAIKeyFieldState extends State<_OpenAIKeyField> {
           onSubmitted: (_) => _save(),
         ),
       ],
+    );
+  }
+}
+
+class _GeminiKeyField extends StatefulWidget {
+  const _GeminiKeyField();
+
+  @override
+  State<_GeminiKeyField> createState() => _GeminiKeyFieldState();
+}
+
+class _GeminiKeyFieldState extends State<_GeminiKeyField> {
+  final _controller = TextEditingController();
+  bool _obscure = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final v = await _storage.read(key: 'google_api_key');
+      if (!mounted) return;
+      _controller.text = v ?? '';
+    } catch (_) {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final value = _controller.text.trim();
+    final service = context.read<GeminiService>();
+    if (value.isEmpty) {
+      try {
+        await _storage.delete(key: 'google_api_key');
+      } catch (_) {}
+      service.apiKey = '';
+    } else {
+      try {
+        await _storage.write(key: 'google_api_key', value: value);
+      } catch (_) {}
+      service.apiKey = value;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(value.isEmpty ? 'Gemini key cleared' : 'Gemini key saved')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      enabled: _loaded,
+      obscureText: _obscure,
+      decoration: InputDecoration(
+        labelText: 'Gemini (Google) API Key',
+        hintText: 'AIza...',
+        border: const OutlineInputBorder(),
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _save,
+            ),
+          ],
+        ),
+      ),
+      onSubmitted: (_) => _save(),
     );
   }
 }

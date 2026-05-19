@@ -104,6 +104,29 @@ jobs:
       - name: Build Windows
         run: flutter build windows --release
 
+      - name: Bundle Visual C++ runtime DLLs
+        # horizon.exe is built against the dynamic MSVC runtime, so end users
+        # without VC++ Redistributable installed see "MSVCP140.dll not found"
+        # on launch. Copy the runtime DLLs from the GitHub-hosted MSVC install
+        # into the Release directory before zipping.
+        run: |
+          $relDir = "build\windows\x64\runner\Release"
+          $msvc = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022" -Recurse -Filter "Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match "x64\\Microsoft.VC.*\.CRT" -and $_.FullName -match "redist" } |
+                  Select-Object -First 1
+          if (-not $msvc) {
+            Write-Error "Could not locate VC++ redistributable directory."
+            exit 1
+          }
+          Write-Host "Copying VC++ runtime from $($msvc.FullName) to $relDir"
+          Copy-Item "$($msvc.FullName)\msvcp140.dll" $relDir -Force
+          Copy-Item "$($msvc.FullName)\vcruntime140.dll" $relDir -Force
+          if (Test-Path "$($msvc.FullName)\vcruntime140_1.dll") {
+            Copy-Item "$($msvc.FullName)\vcruntime140_1.dll" $relDir -Force
+          }
+          Get-ChildItem $relDir -Filter "*.dll" | Select-Object Name
+        shell: pwsh
+
       - name: Zip runner folder
         run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath horizon-windows.zip
         shell: pwsh
