@@ -263,21 +263,23 @@ class ChatPageViewModel extends ChangeNotifier {
         return false;
       }
 
-      // Create a new chat with the selected model
-      await _chatProvider.createNewChat(_selectedModel!);
-
-      // Take the prompt and images and refresh the presets
+      // Take the prompt and images and refresh the presets BEFORE the chat
+      // exists — we'll seed the new chat with this message in a single
+      // notify so the user never sees an empty "No messages yet" frame
+      // between createChat and sendPrompt.
       final prompt = _takeTextFieldValue();
       final images = _takeImages();
       _presets = ChatPresets.randomPresets;
-
-      // Notify listeners
       notifyListeners();
 
-      // Send the prompt
-      await _chatProvider.sendPrompt(prompt, images: images);
+      await _chatProvider.createNewChatAndSendPrompt(
+        _selectedModel!,
+        prompt,
+        images: images,
+      );
 
-      // Generate title for the new chat
+      // Generate title for the new chat (best-effort, fires in parallel
+      // with the response stream).
       await _chatProvider.generateTitleForCurrentChat();
     } else {
       // Get and clear the prompt and images

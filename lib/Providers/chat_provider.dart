@@ -137,30 +137,68 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> createNewChat(OllamaModel model) async {
+    await _createNewChatInternal(model, firstPrompt: null);
+    notifyListeners();
+  }
+
+  /// Atomic "create a new chat AND send the first prompt" path used when the
+  /// user fires off a prompt with no current chat selected. Folds the chat
+  /// creation, message seeding, and stream init into a single notify cycle so
+  /// the UI never paints an intermediate state — neither the previous chat's
+  /// messages nor an empty "No messages yet" placeholder.
+  Future<void> createNewChatAndSendPrompt(
+    OllamaModel model,
+    String text, {
+    List<File>? images,
+  }) async {
+    final chat = await _createNewChatInternal(model, firstPrompt: null);
+
+    final prompt = OllamaMessage(
+      text.trim(),
+      images: images,
+      role: OllamaMessageRole.user,
+    );
+    _messages = [prompt];
+    notifyListeners();
+
+    await _databaseService.addMessage(prompt, chat: chat);
+    await _initializeChatStream(chat);
+  }
+
+  /// Internal helper: do all the synchronous work of "make a new chat" without
+  /// notifying. Returns the freshly-inserted OllamaChat (already in [_chats]).
+  Future<OllamaChat> _createNewChatInternal(
+    OllamaModel model, {
+    required OllamaMessage? firstPrompt,
+  }) async {
     final chat = await _databaseService.createChat(
       model.name,
       provider: model.provider,
     );
 
-    // Drop any messages still resident from the previously-selected chat
-    // BEFORE notifying. Without this, the UI rebuilds with the new chat's
-    // currentChat but the prior chat's _messages list, flashing the stale
-    // conversation for one frame on send.
-    _messages = [];
+    // Replace _messages atomically — this clears any leftover state from a
+    // previously-viewed chat AND seeds the first user prompt (if any) in the
+    // same step, so the upcoming notify shows the new chat fully populated.
+    _messages = firstPrompt != null ? [firstPrompt] : [];
 
     _chats.insert(0, chat);
     _currentChatIndex = 0;
 
+    // Apply any pre-chat configuration the user set up on the empty chat
+    // screen. Update directly through the DB to avoid the extra notify that
+    // updateCurrentChat would emit.
     if (_emptyChatConfiguration != null) {
-      await updateCurrentChat(
-        newSystemPrompt: _emptyChatConfiguration!.systemPrompt,
-        newOptions: _emptyChatConfiguration!.chatOptions,
-      );
-
+      final cfg = _emptyChatConfiguration!;
       _emptyChatConfiguration = null;
+      await _databaseService.updateChat(
+        chat,
+        newSystemPrompt: cfg.systemPrompt,
+        newOptions: cfg.chatOptions,
+      );
+      _chats[0] = (await _databaseService.getChat(chat.id))!;
     }
 
-    notifyListeners();
+    return _chats[0];
   }
 
   Future<void> updateCurrentChat({
@@ -307,22 +345,28 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
 
-    // Typewriter buffer: incoming tokens go into [pending]; a 16 ms timer
+    // Typewriter buffer: incoming tokens go into [pending]; a 32 ms timer
     // drains characters into the displayed message at a steady pace.
-    // Drain rate scales with backlog so big bursts catch up fast while
-    // trickling tokens still feel smooth.
+    //
+    // Why 32 ms and not 16 ms: at 120 Hz the per-frame budget is 8.3 ms, and
+    // rebuilding the streaming Text widget plus relaying out the bottom
+    // sliver on every 16 ms tick was burning enough of that budget to make
+    // touch scrolling feel sticky during long streams. ~30 fps repaint is
+    // still well above human reading rate but leaves the gesture system
+    // breathing room. Drain rate is bumped proportionally so the visible
+    // speed of text appearing doesn't change.
     final pending = StringBuffer();
     Timer? typewriter;
 
     void startTypewriter() {
-      typewriter ??= Timer.periodic(const Duration(milliseconds: 16), (t) {
+      typewriter ??= Timer.periodic(const Duration(milliseconds: 32), (t) {
         if (pending.isEmpty || streamingMessage == null) return;
         final s = pending.toString();
         pending.clear();
-        final n = (s.length ~/ 8).clamp(1, 24);
+        final n = (s.length ~/ 4).clamp(2, 48);
         streamingMessage!.content += s.substring(0, n);
         if (n < s.length) pending.write(s.substring(n));
-        // Update only the ValueNotifier — avoids a full-page rebuild every 16 ms.
+        // Update only the ValueNotifier — avoids a full-page rebuild.
         streamingContent.value = streamingMessage!.content;
       });
     }

@@ -106,9 +106,10 @@ class _ChatListViewState extends State<ChatListView> {
         CustomScrollView(
           controller: _scrollController,
           reverse: true,
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
+          // Inherit platform-default physics (Clamping + stretch overscroll
+          // on Android, Bouncing on iOS/macOS). Hard-coding BouncingScrollPhysics
+          // here made Android feel un-Material; remove the override.
+          physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             if (widget.bottomPadding != null)
               SliverPadding(
