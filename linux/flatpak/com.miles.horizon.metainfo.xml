@@ -2,42 +2,42 @@
 <component type="desktop-application">
   <id>com.miles.horizon</id>
 
-  <name>Reins: Chat for Ollama</name>
-  <summary>Private AI Chat</summary>
+  <name>Horizon</name>
+  <summary>Multi-provider AI chat — Ollama, Claude, OpenAI, Gemini</summary>
 
   <description>
     <p>
-    Reins is a powerful chat client for your self-hosted Ollama AI models. Connect remotely, customize prompts, adjust parameters, and manage multiple conversations with ease.
+      Horizon is a Flutter chat client that talks to Ollama, Claude, OpenAI, and Gemini from a single app.
+      Pick provider and model per conversation, switch mid-thread, and keep API keys in the OS keystore.
     </p>
-    <p>
-    Key Features:
-    </p>
+    <p>Features:</p>
     <ul>
-      <li>Connect to remote Ollama servers</li>
-      <li>Custom system prompts per chat</li>
-      <li>Edit and regenerate responses</li>
-      <li>Send images</li>
-      <li>Fine-tune model parameters (temperature, context size, etc.) for each chat</li>
-      <li>Switch models mid-conversation</li>
-      <li>Create custom models from chats</li>
-      <li>Real-time message streaming</li>
+      <li>Four providers in one client: Ollama (local), Claude (Anthropic), OpenAI, Gemini (Google)</li>
+      <li>Per-chat provider, model, system prompt, and inference options</li>
+      <li>Primary + backup Ollama URL with automatic failover — keep your home-LAN server private and fall back to a VPN/Tailscale endpoint transparently</li>
+      <li>API keys stored in the OS keystore via libsecret</li>
+      <li>Image input on vision-capable models</li>
+      <li>Smooth streaming output with typewriter buffering</li>
+      <li>OLED-true-black dark theme</li>
+      <li>Edit and regenerate any message in the conversation</li>
     </ul>
     <p>
-    Requires a self-hosted Ollama Server.
+      Horizon is a fork of Reins by Ibrahim Çetin. The original Ollama-focused client and Flutter scaffolding are his work; Horizon extends it into a multi-provider client with hardened networking and self-hosted-friendly features.
     </p>
   </description>
 
   <icon type="stock">com.miles.horizon</icon>
   <launchable type="desktop-id">com.miles.horizon.desktop</launchable>
 
-  <developer id="dev.ibrahimcetin">
-     <name>İbrahim Çetin</name>
+  <developer id="dev.60milesperhour">
+    <name>Miles Oldenburger</name>
   </developer>
 
   <categories>
     <category>Utility</category>
-    <category>Development</category>
+    <category>Network</category>
     <category>Chat</category>
+    <category>Development</category>
   </categories>
 
   <metadata_license>CC0-1.0</metadata_license>
@@ -51,63 +51,41 @@
 
   <content_rating type="oars-1.1" />
 
-  <url type="homepage">https://reins.ibrahimcetin.dev</url>
-  <url type="vcs-browser">https://github.com/ibrahimcetin/reins</url>
-  <url type="bugtracker">https://github.com/ibrahimcetin/reins/issues</url>
-
-  <screenshots>
-    <screenshot type="default">
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/1.png</image>
-      <caption>Chatting with a model using Reins</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/2.png</image>
-      <caption>Configure your chat's options</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/3.png</image>
-      <caption>Advanced chat options</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/4.png</image>
-      <caption>Dynamically switch LLM models</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/5.png</image>
-      <caption>Select a model for the chat</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/6.png</image>
-      <caption>Edit and regenerate prompt</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/7.png</image>
-      <caption>Customize app theme as you want</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://reins.ibrahimcetin.dev/assets/screenshots/desktop/8.png</image>
-      <caption>Open source and privacy prioritized</caption>
-    </screenshot>
-  </screenshots>
+  <url type="homepage">https://github.com/60MilesPerHour/Horizon</url>
+  <url type="vcs-browser">https://github.com/60MilesPerHour/Horizon</url>
+  <url type="bugtracker">https://github.com/60MilesPerHour/Horizon/issues</url>
 
   <releases>
-    <release version="1.3.3" date="2025-12-17">
-      <url type="details">https://github.com/ibrahimcetin/reins/releases/tag/v1.3.3</url>
+    <release version="3.2.2" date="2026-05-19">
+      <url type="details">https://github.com/60MilesPerHour/Horizon/releases/tag/v3.2.2</url>
       <description>
-        <p>Fixes</p>
+        <p>Linux release, scroll polish.</p>
         <ul>
-          <li>Improved accessibility: all UI now respects system font size settings.</li>
-          <li>Fixed issue where thinking indicator would disappear unexpectedly.</li>
-          <li>Fixed issue where chat titles appeared empty while generating.</li>
+          <li>First Linux release: .deb for Debian/Ubuntu/Mint/Pop and .tar.gz for other distros.</li>
+          <li>Fixed a blank-screen flash between sending a prompt and the first streamed token.</li>
+          <li>Fixed sticky touch scrolling on 120 Hz screens during long streams.</li>
+          <li>Restored platform-native overscroll feel (Android stretch, iOS bounce).</li>
         </ul>
       </description>
     </release>
-    <release version="1.3.2" date="2025-10-19">
-      <url type="details">https://github.com/ibrahimcetin/reins/releases/tag/v1.3.2</url>
+    <release version="3.2.1" date="2026-05-18">
+      <url type="details">https://github.com/60MilesPerHour/Horizon/releases/tag/v3.2.1</url>
       <description>
-        <p>Fixes</p>
+        <p>Ollama context-size fix.</p>
         <ul>
-          <li>Fixed an issue where the chat could scroll up automatically while generating a response.</li>
+          <li>Stopped forcing num_ctx=2048 on every Ollama request, which was making the server unload and reload models that were already running at a different context size.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="3.2.0" date="2026-05-18">
+      <url type="details">https://github.com/60MilesPerHour/Horizon/releases/tag/v3.2.0</url>
+      <description>
+        <p>Scroll engine rewrite, Gemini provider, backup Ollama URL.</p>
+        <ul>
+          <li>Rewrote the chat scroll engine — long responses no longer feel like a slideshow during or after generation.</li>
+          <li>Added Gemini (Google Generative Language API) as a fourth provider.</li>
+          <li>Added an optional backup Ollama server URL with automatic failover, so a private home-LAN address can stay private while traffic transparently routes via VPN/Tailscale when out-of-network.</li>
+          <li>Windows builds now bundle the VC++ runtime DLLs so horizon.exe launches without a separate Redistributable install.</li>
         </ul>
       </description>
     </release>
