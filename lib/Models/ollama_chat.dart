@@ -109,6 +109,14 @@ class OllamaChatOptions {
   /// Tokens with lower probability are filtered out.
   double minP;
 
+  /// Whether to enable the model's "thinking" phase, for Ollama models that
+  /// support it (Qwen 3, gpt-oss, etc.). Tri-state:
+  ///   null  → don't send the field; let the model use its default
+  ///   true  → force thinking on
+  ///   false → force thinking off (no_think)
+  /// Models without a thinking phase ignore this flag.
+  bool? think;
+
   /// Creates an instance of [OllamaChatOptions] with default values.
   OllamaChatOptions({
     int? mirostat,
@@ -124,6 +132,7 @@ class OllamaChatOptions {
     int? topK,
     double? topP,
     double? minP,
+    this.think,
   })  : mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
         mirostatTau = mirostatTau ?? 5.0,
@@ -158,6 +167,7 @@ class OllamaChatOptions {
       topK: map['top_k'],
       topP: map['top_p']?.toDouble(),
       minP: map['min_p']?.toDouble(),
+      think: map['think'] is bool ? map['think'] as bool : null,
     );
   }
 
@@ -166,7 +176,9 @@ class OllamaChatOptions {
     return OllamaChatOptions.fromMap(jsonDecode(json));
   }
 
-  /// Converts the instance of [OllamaChatOptions] to a map.
+  /// Converts the instance of [OllamaChatOptions] to a map suitable for the
+  /// Ollama API's `options` field. `think` is intentionally omitted — it's a
+  /// top-level request field, not part of `options`.
   Map<String, dynamic> toMap() {
     return {
       'mirostat': mirostat,
@@ -185,8 +197,12 @@ class OllamaChatOptions {
     };
   }
 
-  /// Converts the instance of [OllamaChatOptions] to a JSON string.
+  /// Converts the instance of [OllamaChatOptions] to a JSON string suitable
+  /// for DB storage. Includes `think` (which `toMap` excludes) so per-chat
+  /// thinking preference survives across app restarts.
   String toJson() {
-    return jsonEncode(toMap());
+    final m = toMap();
+    if (think != null) m['think'] = think;
+    return jsonEncode(m);
   }
 }

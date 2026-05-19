@@ -53,17 +53,19 @@ void main() async {
   String? openaiKey;
   String? openaiBaseUrl;
   String? geminiKey;
+  String? ollamaToken;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
     openaiKey = await storage.read(key: 'openai_api_key');
     openaiBaseUrl = await storage.read(key: 'openai_base_url');
     geminiKey = await storage.read(key: 'google_api_key');
+    ollamaToken = await storage.read(key: 'ollama_api_token');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
 
-  final ollamaService = OllamaService();
+  final ollamaService = OllamaService(apiToken: ollamaToken);
   final claudeService = ClaudeService(apiKey: claudeKey);
   final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl);
   final geminiService = GeminiService(apiKey: geminiKey);

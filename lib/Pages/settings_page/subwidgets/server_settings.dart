@@ -3,12 +3,15 @@ import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive/hive.dart';
 import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
+import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Widgets/ollama_bottom_sheet_header.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class ServerSettings extends StatefulWidget {
@@ -151,6 +154,8 @@ class _ServerSettingsState extends State<ServerSettings> {
             ),
           ),
         ),
+        const SizedBox(height: 24),
+        const _OllamaTokenField(),
       ],
     );
   }
@@ -450,6 +455,96 @@ class _OllamaInfoBottomSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _OllamaTokenField extends StatefulWidget {
+  const _OllamaTokenField();
+
+  @override
+  State<_OllamaTokenField> createState() => _OllamaTokenFieldState();
+}
+
+class _OllamaTokenFieldState extends State<_OllamaTokenField> {
+  static const _storage = FlutterSecureStorage();
+
+  final _controller = TextEditingController();
+  bool _obscure = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final v = await _storage.read(key: 'ollama_api_token');
+      if (!mounted) return;
+      _controller.text = v ?? '';
+    } catch (_) {
+      // ignore — keystore may be unavailable on Linux without a keyring
+    } finally {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final value = _controller.text.trim();
+    final service = context.read<OllamaService>();
+    if (value.isEmpty) {
+      try {
+        await _storage.delete(key: 'ollama_api_token');
+      } catch (_) {}
+      service.apiToken = '';
+    } else {
+      try {
+        await _storage.write(key: 'ollama_api_token', value: value);
+      } catch (_) {}
+      service.apiToken = value;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(value.isEmpty ? 'Ollama token cleared' : 'Ollama token saved')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      enabled: _loaded,
+      obscureText: _obscure,
+      decoration: InputDecoration(
+        labelText: 'Ollama API Token (optional)',
+        helperText: 'Bearer token sent as Authorization header. Required for Ollama Cloud (ollama.com); local servers without auth ignore it.',
+        helperMaxLines: 3,
+        hintText: 'olc-... or your reverse-proxy token',
+        border: const OutlineInputBorder(),
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _save,
+            ),
+          ],
+        ),
+      ),
+      onSubmitted: (_) => _save(),
     );
   }
 }

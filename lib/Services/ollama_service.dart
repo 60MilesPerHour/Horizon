@@ -52,13 +52,32 @@ class OllamaService extends ChatService {
     _activeUrl = null;
   }
 
-  /// The headers to include in all network requests.
-  final headers = {'Content-Type': 'application/json'};
+  /// Optional bearer token for authenticated Ollama servers — primarily
+  /// Ollama Cloud (ollama.com), but also works with any reverse-proxy that
+  /// gates a self-hosted Ollama behind Authorization. Sent as
+  /// `Authorization: Bearer <token>` on every request when set. Local
+  /// servers without auth simply ignore the header.
+  String _apiToken = '';
+  String get apiToken => _apiToken;
+  set apiToken(String? value) {
+    _apiToken = value ?? '';
+  }
+
+  /// The headers to include in all network requests. Built per-request so
+  /// the bearer token reflects the current setting.
+  Map<String, String> get headers {
+    final h = <String, String>{'Content-Type': 'application/json'};
+    if (_apiToken.isNotEmpty) {
+      h['Authorization'] = 'Bearer $_apiToken';
+    }
+    return h;
+  }
 
   /// Creates a new instance of the Ollama service.
-  OllamaService({String? baseUrl, String? backupUrl})
+  OllamaService({String? baseUrl, String? backupUrl, String? apiToken})
       : _baseUrl = baseUrl ?? "http://localhost:11434",
         _backupUrl = (backupUrl == null || backupUrl.isEmpty) ? null : backupUrl,
+        _apiToken = apiToken ?? '',
         _userSetAddress = baseUrl != null && baseUrl.isNotEmpty;
 
   /// Ordered list of URLs to try for the next request. Starts with whichever
@@ -133,6 +152,7 @@ class OllamaService extends ChatService {
           "prompt": prompt,
           "system": chat.systemPrompt,
           "options": chat.options.toMap(),
+          if (chat.options.think != null) "think": chat.options.think,
           "stream": false,
         }),
       ).timeout(Duration(seconds: 30), onTimeout: () {
@@ -169,6 +189,7 @@ class OllamaService extends ChatService {
         "prompt": prompt,
         "system": chat.systemPrompt,
         "options": chat.options.toMap(),
+        if (chat.options.think != null) "think": chat.options.think,
         "stream": true,
       });
       return request.send().timeout(Duration(seconds: 30), onTimeout: () {
@@ -212,6 +233,7 @@ class OllamaService extends ChatService {
           "model": chat.model,
           "messages": encoded,
           "options": chat.options.toMap(),
+          if (chat.options.think != null) "think": chat.options.think,
           "stream": false,
         }),
       ).timeout(Duration(seconds: 30), onTimeout: () {
@@ -248,6 +270,7 @@ class OllamaService extends ChatService {
         "model": chat.model,
         "messages": encoded,
         "options": chat.options.toMap(),
+        if (chat.options.think != null) "think": chat.options.think,
         "stream": true,
       });
       return request.send().timeout(Duration(seconds: 30), onTimeout: () {

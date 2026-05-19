@@ -162,6 +162,11 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
             onChanged: (v) => _chatOptions.contextSize = v ?? 0,
           ),
           const SizedBox(height: 16),
+          _ThinkingModeTile(
+            value: _chatOptions.think,
+            onChanged: (v) => setState(() => _chatOptions.think = v),
+          ),
+          const SizedBox(height: 16),
           _BottomSheetTextField(
             initialValue: _chatOptions.repeatPenalty,
             labelText: 'Repeat Penalty',
@@ -723,4 +728,73 @@ enum _BottomSheetTextFieldType {
 
 enum ChatConfigureBottomSheetAction {
   delete,
+}
+
+/// Tri-state toggle for the Ollama API's `think` field. Null = don't send,
+/// let the model use its default. True = force thinking on. False = force
+/// thinking off. Ollama models without a thinking phase ignore the field.
+class _ThinkingModeTile extends StatelessWidget {
+  final bool? value;
+  final ValueChanged<bool?> onChanged;
+
+  const _ThinkingModeTile({required this.value, required this.onChanged});
+
+  String _label(bool? v) {
+    switch (v) {
+      case true:
+        return 'Force on';
+      case false:
+        return 'Force off (no_think)';
+      default:
+        return "Model default";
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+          child: Text(
+            'Thinking',
+            style: theme.textTheme.titleSmall,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+          child: Text(
+            'Ollama-only. For models that support a thinking phase (Qwen 3, gpt-oss, etc.). Other models ignore this.',
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(value: 0, label: Text('Default'), icon: Icon(Icons.auto_awesome_outlined)),
+            ButtonSegment(value: 1, label: Text('On'), icon: Icon(Icons.lightbulb_outline)),
+            ButtonSegment(value: 2, label: Text('Off'), icon: Icon(Icons.flash_off_outlined)),
+          ],
+          selected: {
+            value == null ? 0 : (value == true ? 1 : 2),
+          },
+          onSelectionChanged: (s) {
+            final v = s.first;
+            onChanged(v == 0 ? null : (v == 1 ? true : false));
+          },
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+          child: Text(
+            'Current: ${_label(value)}',
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+      ],
+    );
+  }
 }
