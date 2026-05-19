@@ -101,7 +101,6 @@ class _ChatListViewState extends State<ChatListView> {
   @override
   Widget build(BuildContext context) {
     return Stack(
-      alignment: Alignment.bottomCenter,
       children: [
         CustomScrollView(
           controller: _scrollController,
@@ -149,14 +148,23 @@ class _ChatListViewState extends State<ChatListView> {
             ),
           ],
         ),
+        // Bottom-right corner so it never obscures streaming text. Sized
+        // down from a default IconButton (48dp) to a small FAB so it sits
+        // out of the reading flow but stays tappable. Slight opacity lets
+        // the user see what's underneath when the bubble is wide.
         if (_showScrollButton)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: IconButton(
-              onPressed: () => _snapToBottom(animated: true),
-              icon: const Icon(Icons.arrow_downward_rounded),
-              style: IconButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.onInverseSurface,
+          Positioned(
+            right: 12.0,
+            bottom: 12.0,
+            child: Opacity(
+              opacity: 0.92,
+              child: FloatingActionButton.small(
+                heroTag: 'horizon_scroll_to_bottom',
+                onPressed: () => _snapToBottom(animated: true),
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                foregroundColor: Theme.of(context).colorScheme.onSurface,
+                elevation: 2,
+                child: const Icon(Icons.arrow_downward_rounded),
               ),
             ),
           ),
