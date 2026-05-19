@@ -37,7 +37,14 @@ class ChatBubbleActions {
   void handleRegenerate(BuildContext context) {
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 
-    chatProvider.regenerateMessage(message);
+    // Let the Material 3 menu's exit animation (~200 ms stagger fade + scale)
+    // run to completion BEFORE we mutate the chat list. Otherwise the menu
+    // close and the bubble removal and the "Thinking" shimmer all animate on
+    // top of each other in the same frame window, which reads as a jarring
+    // cascading fade.
+    Future.delayed(const Duration(milliseconds: 220), () {
+      chatProvider.regenerateMessage(message);
+    });
   }
 
   void handleEdit(BuildContext context) {
