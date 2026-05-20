@@ -147,6 +147,40 @@ class ChatPageViewModel extends ChangeNotifier {
   }
 
   // ============================================================
+  // Export / Import (Delegated)
+  // ============================================================
+
+  /// Returns true when there's something exportable on screen — used to gate
+  /// the export menu entry.
+  bool get canExportCurrentChat =>
+      _chatProvider.currentChat != null && _chatProvider.messages.isNotEmpty;
+
+  /// Builds the serialised export of the current chat. Caller is responsible
+  /// for actually writing/sharing the file.
+  Future<String?> exportCurrentChat(ChatExportFormat format) {
+    return _chatProvider.exportChat(format: format);
+  }
+
+  /// Filename hint for the current chat in the given format. Sanitised so
+  /// it's safe to drop on every desktop / mobile filesystem we ship to.
+  String exportFilename(ChatExportFormat format) {
+    final raw = _chatProvider.currentChat?.title ?? 'horizon-chat';
+    final safe = raw
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '-')
+        .trim();
+    final base = safe.isEmpty ? 'horizon-chat' : safe;
+    return '$base.${format.extension}';
+  }
+
+  /// Restore a chat from an exported file string. Throws if the input can't
+  /// be parsed at all (the importer is permissive, so this mostly means the
+  /// file is empty / no recognisable messages).
+  Future<OllamaChat> importChatFromString(String content) {
+    return _chatProvider.importChatFromString(content);
+  }
+
+  // ============================================================
   // Model Selection
   // ============================================================
 

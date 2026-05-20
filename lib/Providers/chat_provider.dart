@@ -11,6 +11,7 @@ import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
+import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
 
@@ -512,6 +513,61 @@ class ChatProvider extends ChangeNotifier {
 
   Future<List<OllamaModel>> fetchAvailableModels() async {
     return await _registry.listAllModels();
+  }
+
+  // ============================================================
+  // Export / Import
+  // ============================================================
+
+  /// Serialise [chat] (defaulting to the current chat) into a Markdown or
+  /// text export. Returns null when there is no chat to export.
+  Future<String?> exportChat({
+    OllamaChat? chat,
+    required ChatExportFormat format,
+  }) async {
+    final target = chat ?? currentChat;
+    if (target == null) return null;
+
+    final messages = await _databaseService.getMessages(target.id);
+    final service = ChatExportService();
+    switch (format) {
+      case ChatExportFormat.markdown:
+        return service.exportToMarkdown(target, messages);
+      case ChatExportFormat.text:
+        return service.exportToText(target, messages);
+    }
+  }
+
+  /// Restore a chat from an exported Markdown/text string. Creates a fresh
+  /// chat row and inserts every message under it (the import always mints a
+  /// new chat ID so we can never collide with an existing chat). On success
+  /// the imported chat is opened.
+  Future<OllamaChat> importChatFromString(String content) async {
+    final parsed = ChatExportService().parseImport(content);
+
+    // Step 1 — create the chat row with the imported model/provider.
+    final chat = await _databaseService.createChat(
+      parsed.chat.model,
+      provider: parsed.chat.provider,
+    );
+    // Step 2 — patch title/system prompt/options onto the new row.
+    await _databaseService.updateChat(
+      chat,
+      newTitle: parsed.chat.title,
+      newSystemPrompt: parsed.chat.systemPrompt,
+      newOptions: parsed.chat.options,
+    );
+    // Step 3 — insert messages in order.
+    for (final message in parsed.messages) {
+      await _databaseService.addMessage(message, chat: chat);
+    }
+    // Step 4 — surface the imported chat in the sidebar and open it.
+    final refreshed = (await _databaseService.getChat(chat.id))!;
+    _chats.insert(0, refreshed);
+    _currentChatIndex = 0;
+    _messages = parsed.messages.toList();
+    notifyListeners();
+    return refreshed;
   }
 
   void _bindOllamaServerAddress() {

@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Providers/chat_provider.dart';
@@ -5,6 +8,53 @@ import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 import 'title_divider.dart';
+
+Future<void> _handleImport(BuildContext context) async {
+  final chatProvider = context.read<ChatProvider>();
+  final messenger = ScaffoldMessenger.of(context);
+  // Capture isMobile before any awaits so we know whether to pop the
+  // drawer when we're done.
+  final isMobile = ResponsiveBreakpoints.of(context).isMobile;
+
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['md', 'txt', 'markdown'],
+    withData: true,
+  );
+  if (result == null || result.files.isEmpty) return;
+
+  final file = result.files.single;
+  String content;
+  try {
+    if (file.bytes != null) {
+      content = String.fromCharCodes(file.bytes!);
+    } else if (file.path != null) {
+      content = await File(file.path!).readAsString();
+    } else {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not read the selected file.')),
+      );
+      return;
+    }
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Could not read the file: $e')),
+    );
+    return;
+  }
+
+  try {
+    final chat = await chatProvider.importChatFromString(content);
+    messenger.showSnackBar(
+      SnackBar(content: Text('Imported "${chat.title}"')),
+    );
+    if (isMobile && context.mounted) Navigator.of(context).pop();
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Import failed: $e')),
+    );
+  }
+}
 
 class ChatDrawer extends StatelessWidget {
   const ChatDrawer({super.key});
@@ -16,18 +66,26 @@ class ChatDrawer extends StatelessWidget {
         child: Column(
           children: [
             const Expanded(child: ChatNavigationDrawer()),
-            Container(
-              alignment: Alignment.centerLeft,
+            Padding(
               padding: const EdgeInsets.fromLTRB(28, 16, 28, 10),
-              child: IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () {
-                  if (ResponsiveBreakpoints.of(context).isMobile) {
-                    Navigator.pop(context);
-                  }
-
-                  Navigator.pushNamed(context, '/settings');
-                },
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: 'Settings',
+                    onPressed: () {
+                      if (ResponsiveBreakpoints.of(context).isMobile) {
+                        Navigator.pop(context);
+                      }
+                      Navigator.pushNamed(context, '/settings');
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.file_upload_outlined),
+                    tooltip: 'Import chat from file',
+                    onPressed: () => _handleImport(context),
+                  ),
+                ],
               ),
             ),
           ],
