@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -26,8 +27,12 @@ Future<void> _handleImport(BuildContext context) async {
   final file = result.files.single;
   String content;
   try {
+    // Decode bytes as UTF-8, NOT String.fromCharCodes — that treats each byte
+    // as a code unit and mangles every non-ASCII glyph (most importantly the
+    // U+00B7 `·` separators we use in message headers), which made the parser
+    // find zero messages and import an empty chat.
     if (file.bytes != null) {
-      content = String.fromCharCodes(file.bytes!);
+      content = utf8.decode(file.bytes!, allowMalformed: true);
     } else if (file.path != null) {
       content = await File(file.path!).readAsString();
     } else {

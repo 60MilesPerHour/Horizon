@@ -1,9 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:horizon/Models/chat_configure_arguments.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
+import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Widgets/flexible_text.dart';
 
 import 'ollama_bottom_sheet_header.dart';
@@ -77,13 +83,13 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
       padding: const EdgeInsets.symmetric(vertical: 16.0),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       children: [
-        // The buttons to rename, save as a new model, and delete the chat
+        // Rename / Export / Delete row.
         Row(
           spacing: 16.0,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Expanded(child: _RenameButton()),
-            Expanded(child: _SaveAsNewModelButton()),
+            Expanded(child: _ExportButton()),
             Expanded(child: _DeleteButton()),
           ],
         ),
@@ -336,135 +342,77 @@ class _RenameButton extends StatelessWidget {
   }
 }
 
-class _SaveAsNewModelButton extends StatelessWidget {
-  const _SaveAsNewModelButton({super.key});
+/// Per-chat export button — opens a format picker, then hands the produced
+/// file to the platform share sheet so the user can save it anywhere.
+class _ExportButton extends StatelessWidget {
+  const _ExportButton({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final chatProvider = context.watch<ChatProvider>();
+    final canExport = chatProvider.currentChat != null &&
+        chatProvider.messages.isNotEmpty;
+
     return _BottomSheetButton(
-      icon: const Icon(Icons.save_as_outlined),
-      title: 'Save as a new model',
+      icon: const Icon(Icons.ios_share_outlined),
+      title: 'Export',
+      isDisabled: !canExport,
       onPressed: () async {
-        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-
-        final newModelName = await _showSaveAsNewModelDialog(context);
-
-        if (newModelName != null) {
-          bool success = false;
-          String errorMessage = '';
-
-          try {
-            await chatProvider.saveAsNewModel(newModelName);
-            success = true;
-          } on OllamaException catch (error) {
-            success = false;
-            errorMessage = '\n${error.message}';
-          } catch (error) {
-            success = false;
-          }
-
-          final snackBarText = success
-              ? 'Model "$newModelName" saved successfully!'
-              : 'Failed to save model "$newModelName".$errorMessage';
-
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(snackBarText),
-                showCloseIcon: true,
-                backgroundColor: success ? Colors.green : Colors.red,
-              ),
-            );
-
-            Navigator.of(context).pop();
-          }
-        }
+        final format = await _pickFormat(context);
+        if (format == null || !context.mounted) return;
+        await _runExport(context, format);
       },
     );
   }
 
-  Future<String?> _showSaveAsNewModelDialog(BuildContext context) {
-    return showDialog<String>(
+  Future<ChatExportFormat?> _pickFormat(BuildContext context) {
+    return showModalBottomSheet<ChatExportFormat>(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => const _SaveAsNewModelDialog(),
-    );
-  }
-}
-
-class _SaveAsNewModelDialog extends StatefulWidget {
-  const _SaveAsNewModelDialog();
-
-  @override
-  State<_SaveAsNewModelDialog> createState() => _SaveAsNewModelDialogState();
-}
-
-class _SaveAsNewModelDialogState extends State<_SaveAsNewModelDialog> {
-  String _modelName = '';
-  String? _errorText;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Save As New Model', maxLines: 2, overflow: TextOverflow.ellipsis),
-      content: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: TextField(
-          decoration: InputDecoration(
-            labelText: 'New Model Name',
-            errorText: _errorText,
-            errorMaxLines: 5,
-            helperText: 'Format: model, namespace/model, or model:tag',
-            helperMaxLines: 5,
-            border: const OutlineInputBorder(),
-          ),
-          onChanged: (value) {
-            setState(() {
-              _modelName = value;
-              _errorText = _validateModelName(value);
-            });
-          },
-          onTapOutside: (PointerDownEvent event) {
-            FocusManager.instance.primaryFocus?.unfocus();
-          },
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Markdown (.md)'),
+              subtitle: const Text('Renders nicely in any Markdown viewer.'),
+              onTap: () =>
+                  Navigator.of(context).pop(ChatExportFormat.markdown),
+            ),
+            ListTile(
+              leading: const Icon(Icons.text_snippet_outlined),
+              title: const Text('Plain text (.txt)'),
+              subtitle: const Text('Pure text, no formatting.'),
+              onTap: () => Navigator.of(context).pop(ChatExportFormat.text),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: _isValid ? () => Navigator.of(context).pop(_modelName.trim()) : null,
-          child: const Text('Save'),
-        ),
-      ],
     );
   }
 
-  /// Model names follow the `[namespace/]model[:tag]` format.
-  /// Each segment must start with an alphanumeric character and
-  /// can contain alphanumeric characters, hyphens, underscores, and dots.
-  static final _modelNamePattern = RegExp(
-    r'^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)?(:[a-zA-Z0-9][a-zA-Z0-9._-]*)?$',
-  );
+  Future<void> _runExport(BuildContext context, ChatExportFormat format) async {
+    final viewModel = context.read<ChatPageViewModel>();
+    final messenger = ScaffoldMessenger.of(context);
+    final content = await viewModel.exportCurrentChat(format);
+    if (content == null) return;
 
-  bool get _isValid => _modelName.trim().isNotEmpty && _errorText == null;
+    final filename = viewModel.exportFilename(format);
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/$filename');
+      await file.writeAsString(content);
 
-  String? _validateModelName(String value) {
-    if (value.trim().isEmpty) {
-      return null;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: format.mimeType, name: filename)],
+          subject: filename,
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Export failed: $e')),
+      );
     }
-
-    if (value.contains(' ')) {
-      return 'Model name must not contain spaces';
-    }
-
-    if (!_modelNamePattern.hasMatch(value.trim())) {
-      return 'Invalid model name format. Use [namespace/]model[:tag]';
-    }
-
-    return null;
   }
 }
 

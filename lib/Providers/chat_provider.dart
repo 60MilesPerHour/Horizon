@@ -584,23 +584,6 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> saveAsNewModel(String modelName) async {
-    final associatedChat = currentChat;
-    if (associatedChat == null) {
-      throw OllamaException("No chat is selected.");
-    }
-
-    if (associatedChat.provider != 'ollama') {
-      throw OllamaException("Saving models is only supported for Ollama chats.");
-    }
-
-    await _registry.ollama.createModel(
-      modelName,
-      chat: associatedChat,
-      messages: _messages.toList(),
-    );
-  }
-
   Future<void> generateTitleForCurrentChat() async {
     final associatedChat = currentChat;
     final message = _messages.firstOrNull;
