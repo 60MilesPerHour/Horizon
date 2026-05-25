@@ -604,20 +604,27 @@ class ChatProvider extends ChangeNotifier {
     );
 
     var title = "";
-    await for (final titleMessage in stream) {
-      // Ignore empty initial messages, preventing empty title
-      if (title.isEmpty && titleMessage.content.isEmpty) {
-        continue;
-      }
+    try {
+      await for (final titleMessage in stream) {
+        // Ignore empty initial messages, preventing empty title
+        if (title.isEmpty && titleMessage.content.isEmpty) {
+          continue;
+        }
 
-      title += titleMessage.content;
+        title += titleMessage.content;
 
-      // If <think> tag exists, do not stream chat title
-      if (title.startsWith("<think>")) {
-        await updateChat(associatedChat, newTitle: "Thinking for a title...");
-      } else {
-        await updateChat(associatedChat, newTitle: title);
+        // If <think> tag exists, do not stream chat title
+        if (title.startsWith("<think>")) {
+          await updateChat(associatedChat, newTitle: "Thinking for a title...");
+        } else {
+          await updateChat(associatedChat, newTitle: title);
+        }
       }
+    } catch (_) {
+      // Title generation is best-effort; a rate-limit or transient error
+      // shouldn't surface as an unhandled exception. The user already sees
+      // any chat-stream error via _chatErrors.
+      return;
     }
 
     // Remove <think> tag and its content
