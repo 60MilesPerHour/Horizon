@@ -61,7 +61,7 @@ Icon=horizon
 Exec=/usr/bin/horizon %U
 Terminal=false
 StartupNotify=true
-StartupWMClass=horizon
+StartupWMClass=com.miles.horizon
 DESKTOP
 
 # 4. Icons at standard hicolor sizes, derived from the 1024x1024 master.
