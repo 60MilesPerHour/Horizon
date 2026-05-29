@@ -574,10 +574,12 @@ class ChatProvider extends ChangeNotifier {
     final settingsBox = Hive.box('settings');
     _registry.ollama.baseUrl = settingsBox.get('serverAddress');
     _registry.ollama.backupUrl = settingsBox.get('serverAddressBackup');
+    _registry.ollama.useBackup = settingsBox.get('serverUseBackup', defaultValue: true) as bool;
 
-    settingsBox.listenable(keys: ["serverAddress", "serverAddressBackup"]).addListener(() {
+    settingsBox.listenable(keys: ["serverAddress", "serverAddressBackup", "serverUseBackup"]).addListener(() {
       _registry.ollama.baseUrl = settingsBox.get('serverAddress');
       _registry.ollama.backupUrl = settingsBox.get('serverAddressBackup');
+      _registry.ollama.useBackup = settingsBox.get('serverUseBackup', defaultValue: true) as bool;
 
       // This will update empty chat state to dismiss "Tap to configure server address" message
       notifyListeners();

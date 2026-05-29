@@ -36,6 +36,10 @@ class _ServerSettingsState extends State<ServerSettings> {
   String? _serverAddressErrorText;
   String? _backupAddressErrorText;
 
+  // Mirrors the Hive 'serverUseBackup' setting; defaults to true so existing
+  // installs keep their failover behavior on upgrade.
+  bool _useBackup = true;
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +50,7 @@ class _ServerSettingsState extends State<ServerSettings> {
   _initialize() {
     final serverAddress = _settingsBox.get('serverAddress');
     final backupAddress = _settingsBox.get('serverAddressBackup');
+    _useBackup = _settingsBox.get('serverUseBackup', defaultValue: true) as bool;
 
     if (serverAddress != null) {
       _serverAddressController.text = serverAddress;
@@ -53,7 +58,7 @@ class _ServerSettingsState extends State<ServerSettings> {
     }
     if (backupAddress != null) {
       _backupAddressController.text = backupAddress;
-      _handleBackupConnectButton();
+      if (_useBackup) _handleBackupConnectButton();
     }
   }
 
@@ -126,6 +131,7 @@ class _ServerSettingsState extends State<ServerSettings> {
         const SizedBox(height: 16),
         TextField(
           controller: _backupAddressController,
+          enabled: _useBackup,
           keyboardType: TextInputType.url,
           onChanged: (_) {
             setState(() {
@@ -145,10 +151,23 @@ class _ServerSettingsState extends State<ServerSettings> {
           },
         ),
         const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Use backup server'),
+          subtitle: const Text(
+            'Turn off when you only want the primary — prevents the app sticking to a stale VPN/ZeroTier endpoint after a brief primary outage.',
+          ),
+          value: _useBackup,
+          onChanged: (v) {
+            setState(() => _useBackup = v);
+            _settingsBox.put('serverUseBackup', v);
+          },
+        ),
+        const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerRight,
           child: ElevatedButton(
-            onPressed: _isLoading ? null : _handleBackupConnectButton,
+            onPressed: (_isLoading || !_useBackup) ? null : _handleBackupConnectButton,
             child: _ConnectionStatusIndicator(
               color: _backupConnectionStatusColor,
             ),

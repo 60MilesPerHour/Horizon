@@ -61,6 +61,20 @@ class OllamaService extends ChatService {
     _activeUrl = null;
   }
 
+  /// Master switch for using the backup URL. When false, failover never
+  /// touches the backup even if one is configured — useful when the user
+  /// is on the LAN and a stale Tailscale/ZeroTier endpoint would otherwise
+  /// get picked up after a transient primary blip and "stick" via
+  /// [_activeUrl]. Toggling this also clears the sticky active URL so the
+  /// next request starts fresh from the primary.
+  bool _useBackup = true;
+  bool get useBackup => _useBackup;
+  set useBackup(bool value) {
+    if (value == _useBackup) return;
+    _useBackup = value;
+    _activeUrl = null;
+  }
+
   /// Optional bearer token for authenticated Ollama servers — primarily
   /// Ollama Cloud (ollama.com), but also works with any reverse-proxy that
   /// gates a self-hosted Ollama behind Authorization. Sent as
@@ -91,11 +105,16 @@ class OllamaService extends ChatService {
 
   /// Ordered list of URLs to try for the next request. Starts with whichever
   /// last succeeded, then falls back to the other(s). Always non-empty.
+  /// Honors [useBackup]: when disabled, the backup URL is never tried even
+  /// if `_activeUrl` happens to point at it (which can't happen after the
+  /// setter clears it, but we belt-and-suspenders here for safety).
   List<String> _urlsToTry() {
     final urls = <String>{};
-    if (_activeUrl != null) urls.add(_activeUrl!);
+    if (_activeUrl != null && (_useBackup || _activeUrl != _backupUrl)) {
+      urls.add(_activeUrl!);
+    }
     urls.add(_baseUrl);
-    if (_backupUrl != null) urls.add(_backupUrl!);
+    if (_useBackup && _backupUrl != null) urls.add(_backupUrl!);
     return urls.toList();
   }
 
