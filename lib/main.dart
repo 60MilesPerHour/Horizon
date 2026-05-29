@@ -84,6 +84,7 @@ void main() async {
         Provider(create: (_) => openaiService),
         Provider(create: (_) => geminiService),
         Provider(create: (_) => registry),
+        ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),

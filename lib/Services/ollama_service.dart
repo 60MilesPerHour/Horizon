@@ -37,6 +37,15 @@ class OllamaService extends ChatService {
   /// first to avoid wasting a round-trip on the known-down endpoint.
   String? _activeUrl;
 
+  /// True when the most recently successful URL is the backup. Used by the
+  /// health indicator to surface a "degraded" state to the user.
+  bool get isOnBackup => _activeUrl != null && _activeUrl == _backupUrl && _activeUrl != _baseUrl;
+
+  /// Fired after every _withFailover() call. `success` is true if any URL
+  /// served the request; false if all candidates failed. Used by
+  /// OllamaHealthMonitor to update the UI without an extra round-trip.
+  void Function(bool success)? onRequestComplete;
+
   String get baseUrl => _activeUrl ?? _baseUrl;
 
   set baseUrl(String? value) {
@@ -106,26 +115,64 @@ class OllamaService extends ChatService {
   /// surfaced from whichever URL was active when they happened — they do
   /// NOT trigger failover, because they imply the server is reachable but
   /// rejecting the request.
-  Future<T> _withFailover<T>(Future<T> Function(String base) op) async {
+  ///
+  /// Each URL is retried [retriesPerUrl] additional times on transient
+  /// connection-level errors (SocketException, HttpException, ClientException)
+  /// before falling over to the next candidate. This catches the common
+  /// ZeroTier/VPN failure mode where the first packet fails but the link
+  /// recovers a moment later. TimeoutException is NOT retried on the same
+  /// URL because the server may already be processing the request, and a
+  /// retry would re-trigger generation.
+  Future<T> _withFailover<T>(
+    Future<T> Function(String base) op, {
+    int retriesPerUrl = 1,
+  }) async {
     Object? lastError;
     StackTrace? lastStack;
     for (final url in _urlsToTry()) {
-      try {
-        final result = await op(url);
-        _activeUrl = url;
-        return result;
-      } on SocketException catch (e, st) {
-        lastError = e;
-        lastStack = st;
-      } on TimeoutException catch (e, st) {
-        lastError = e;
-        lastStack = st;
-      } on HttpException catch (e, st) {
-        lastError = e;
-        lastStack = st;
+      for (int attempt = 0; attempt <= retriesPerUrl; attempt++) {
+        try {
+          final result = await op(url);
+          _activeUrl = url;
+          onRequestComplete?.call(true);
+          return result;
+        } on SocketException catch (e, st) {
+          lastError = e;
+          lastStack = st;
+        } on HttpException catch (e, st) {
+          lastError = e;
+          lastStack = st;
+        } on http.ClientException catch (e, st) {
+          lastError = e;
+          lastStack = st;
+        } on TimeoutException catch (e, st) {
+          lastError = e;
+          lastStack = st;
+          break; // Don't retry timeouts: server may be processing.
+        }
+        if (attempt < retriesPerUrl) {
+          await Future.delayed(Duration(milliseconds: 250 * (1 << attempt)));
+        }
       }
     }
+    onRequestComplete?.call(false);
     Error.throwWithStackTrace(lastError ?? OllamaException('[Ollama] No server reachable.'), lastStack ?? StackTrace.current);
+  }
+
+  /// Lightweight reachability probe. Hits /api/tags through the normal
+  /// failover path (so [isOnBackup] reflects reality afterwards) but with
+  /// zero retries and a short timeout — the probe should fail fast.
+  Future<void> ping() async {
+    await _withFailover((base) async {
+      final url = _build(base, '/api/tags');
+      final response = await http.get(url, headers: headers).timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => throw TimeoutException('Ollama ping timed out'),
+      );
+      if (response.statusCode != 200) {
+        throw OllamaException('[Ollama] ping failed: HTTP ${response.statusCode}');
+      }
+    }, retriesPerUrl: 0);
   }
 
   /// Generates an OllamaMessage.

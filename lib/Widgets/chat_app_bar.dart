@@ -8,6 +8,7 @@ import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Widgets/chat_configure_bottom_sheet.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
+import 'package:horizon/Widgets/ollama_health_indicator.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -41,6 +42,10 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         ],
       ),
       actions: [
+        // Show Ollama health only when the current chat actually uses it —
+        // otherwise the dot is noise for cloud-only users.
+        if (chatProvider.currentChat?.provider == 'ollama' || chatProvider.currentChat == null)
+          const OllamaHealthIndicator(),
         IconButton(
           icon: const Icon(Icons.file_upload_outlined),
           tooltip: 'Import chat from file',

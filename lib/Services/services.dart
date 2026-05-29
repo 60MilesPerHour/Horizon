@@ -4,6 +4,7 @@ export 'chat_service_registry.dart';
 export 'claude_service.dart';
 export 'database_service.dart';
 export 'gemini_service.dart';
+export 'ollama_health_monitor.dart';
 export 'ollama_service.dart';
 export 'openai_service.dart';
 export 'permission_service.dart';
