@@ -1,4 +1,5 @@
 export 'chat_export_service.dart';
+export 'config_backup_service.dart';
 export 'chat_service.dart';
 export 'chat_service_registry.dart';
 export 'claude_service.dart';

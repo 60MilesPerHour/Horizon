@@ -133,7 +133,7 @@ class _ChatListViewState extends State<ChatListView> {
                   child: const ListTile(
                     title: Padding(
                       padding: EdgeInsets.all(10.0),
-                      child: Text("Thinking"),
+                      child: Text("Generating"),
                     ),
                   ),
                 ),

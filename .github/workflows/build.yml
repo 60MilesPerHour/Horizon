@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ master, main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master, main ]
 
@@ -181,3 +182,36 @@ jobs:
           name: horizon-windows
           path: horizon-windows.zip
           retention-days: 30
+
+  # Publish a GitHub Release with all four platform artifacts whenever a
+  # v* tag is pushed. Tag a release with: git tag vX.Y.Z && git push --tags
+  release:
+    needs: [ android, macos, linux, windows ]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage release files with versioned names
+        run: |
+          mkdir -p release
+          TAG="${GITHUB_REF_NAME}"
+          cp artifacts/horizon-release/app-release.apk "release/horizon-${TAG}.apk"
+          cp artifacts/horizon-macos/horizon-macos.zip "release/horizon-${TAG}-macos.zip"
+          cp artifacts/horizon-windows/horizon-windows.zip "release/horizon-${TAG}-windows.zip"
+          # Linux .deb and tarball are already versioned by package-deb.sh.
+          cp artifacts/horizon-linux/* release/
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Horizon ${{ github.ref_name }}
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

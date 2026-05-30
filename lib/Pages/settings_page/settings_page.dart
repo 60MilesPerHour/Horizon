@@ -41,6 +41,8 @@ class _SettingsPageContent extends StatelessWidget {
         SizedBox(height: 16),
         CloudProviderSettings(),
         SizedBox(height: 16),
+        ConfigBackupSettings(),
+        SizedBox(height: 16),
         HorizonSettings(),
       ],
     );
