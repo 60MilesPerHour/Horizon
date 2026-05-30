@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 3.4.7+32
+version: 3.4.8+33
 
 environment:
   sdk: ^3.5.4
@@ -41,6 +41,12 @@ dependencies:
   # SQLite plugin for Flutter
   sqflite: ^2.4.1
   sqflite_common_ffi: ^2.3.4
+  # Direct dependency so we can override the native library lookup on Linux:
+  # the dart sqlite3 loader defaults to the unversioned `libsqlite3.so` (shipped
+  # only by libsqlite3-dev), but the .deb depends on libsqlite3-0, which provides
+  # `libsqlite3.so.0`. We fall back to the versioned name so a fresh install with
+  # only libsqlite3-0 works without the -dev package.
+  sqlite3: ^2.4.0
   uuid: ^4.5.1
 
   # Path provider for SQLite

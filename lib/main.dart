@@ -13,13 +13,33 @@ import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:horizon/Utils/request_review_helper.dart';
 import 'package:responsive_framework/responsive_framework.dart';
+import 'dart:ffi';
 import 'dart:io' show Platform;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqlite3/open.dart' as sqlite3_open;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows || Platform.isLinux) {
+    // The dart sqlite3 loader defaults to opening the unversioned
+    // `libsqlite3.so`, which on Debian/Ubuntu is only shipped by
+    // libsqlite3-dev. Our .deb depends on libsqlite3-0, which provides
+    // `libsqlite3.so.0`. Without this override a fresh install crashes at
+    // boot with "Failed to load dynamic library 'libsqlite3.so'", _db never
+    // initializes, and the first send throws a LateInitializationError before
+    // the message bubble renders. Try the unversioned name first (dev installs
+    // / other distros), then fall back to the versioned soname.
+    if (Platform.isLinux) {
+      sqlite3_open.open.overrideFor(sqlite3_open.OperatingSystem.linux, () {
+        try {
+          return DynamicLibrary.open('libsqlite3.so');
+        } catch (_) {
+          return DynamicLibrary.open('libsqlite3.so.0');
+        }
+      });
+    }
+
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
