@@ -124,6 +124,10 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether the current chat is thinking (waiting for response)
   bool get isThinking => _chatProvider.isCurrentChatThinking;
 
+  /// Whether the current chat is in the web-search fetch phase. Drives the
+  /// "Searching…" label on the awaiting-reply indicator.
+  bool get isSearching => _chatProvider.isCurrentChatSearching;
+
   /// The current chat error, if any
   OllamaException? get currentError => _chatProvider.currentChatError;
 

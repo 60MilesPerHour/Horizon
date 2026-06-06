@@ -3,3 +3,4 @@ export 'path_manager.dart';
 export 'chat_presets.dart';
 export 'generate_title_constants.dart';
 export 'artifact_constants.dart';
+export 'web_search_constants.dart';

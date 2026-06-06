@@ -715,7 +715,7 @@ class _WebSearchTile extends StatelessWidget {
         title: const Text('Web search'),
         subtitle: Text(
           configured
-              ? 'Search the web and feed results to the model on every message.'
+              ? 'Let the model search the web when a question needs current info, with cited sources.'
               : 'Set up a search backend in Settings to enable this.',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),

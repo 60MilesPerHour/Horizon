@@ -15,6 +15,10 @@ import 'package:horizon/Constants/constants.dart';
 class ChatListView extends StatefulWidget {
   final List<OllamaMessage> messages;
   final bool isAwaitingReply;
+
+  /// Label shown in the awaiting-reply shimmer (e.g. "Generating" or
+  /// "Searching the web…").
+  final String statusLabel;
   final Widget? error;
   final double? bottomPadding;
   final ValueNotifier<String>? streamingContent;
@@ -23,6 +27,7 @@ class ChatListView extends StatefulWidget {
     super.key,
     required this.messages,
     required this.isAwaitingReply,
+    this.statusLabel = 'Generating',
     this.error,
     this.bottomPadding,
     this.streamingContent,
@@ -130,10 +135,10 @@ class _ChatListViewState extends State<ChatListView> {
                   baseColor: Theme.of(context).colorScheme.onPrimary,
                   highlightColor: Theme.of(context).colorScheme.onSurface,
                   period: const Duration(milliseconds: 2500),
-                  child: const ListTile(
+                  child: ListTile(
                     title: Padding(
-                      padding: EdgeInsets.all(10.0),
-                      child: Text("Generating"),
+                      padding: const EdgeInsets.all(10.0),
+                      child: Text(widget.statusLabel),
                     ),
                   ),
                 ),

@@ -40,6 +40,13 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, OllamaMessage?> _activeChatStreams = {};
   final Map<String, StreamSubscription?> _streamSubscriptions = {};
 
+  /// Chats currently in the web-search fetch phase. Drives the "Searching…"
+  /// indicator, distinct from the normal "Generating" thinking state.
+  final Set<String> _searchingChats = {};
+
+  bool get isCurrentChatSearching =>
+      currentChat != null && _searchingChats.contains(currentChat?.id);
+
   bool get isCurrentChatStreaming =>
       _activeChatStreams.containsKey(currentChat?.id);
 
@@ -326,7 +333,12 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? ollamaMessage;
 
     try {
-      ollamaMessage = await _streamOllamaMessage(associatedChat);
+      // Build the outgoing message list and effective system prompt. When web
+      // search is on, this runs a decision pass and (only if the model asks)
+      // a search, surfacing the "Searching…" state — see _prepareSend.
+      final (outgoing, effectiveChat) = await _prepareSend(associatedChat);
+      ollamaMessage =
+          await _streamOllamaMessage(associatedChat, outgoing, effectiveChat);
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
     } on SocketException catch (_) {
@@ -338,6 +350,7 @@ class ChatProvider extends ChangeNotifier {
     } finally {
       // Remove the chat from the active chat streams
       _activeChatStreams.remove(associatedChat.id);
+      _searchingChats.remove(associatedChat.id);
       notifyListeners();
     }
 
@@ -347,12 +360,14 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat) async {
+  Future<OllamaMessage?> _streamOllamaMessage(
+    OllamaChat associatedChat,
+    List<OllamaMessage> outgoing,
+    OllamaChat effectiveChat,
+  ) async {
     if (_messages.isEmpty) return null;
 
-    final service = _registry.forChat(associatedChat);
-    final outgoing = await _maybeAugmentWithWebSearch(associatedChat);
-    final effectiveChat = _withArtifactInstructions(associatedChat);
+    final service = _registry.forChat(effectiveChat);
     final stream = service.chatStream(outgoing, chat: effectiveChat);
 
     OllamaMessage? streamingMessage;
@@ -449,54 +464,144 @@ class ChatProvider extends ChangeNotifier {
     return streamingMessage;
   }
 
-  /// If web search is enabled for [chat] and the backend is configured, run a
-  /// search on the latest user prompt and return a NEW message list with the
-  /// results appended to that prompt's content. The stored [_messages] (and
-  /// the visible user bubble) are left untouched — the search context is only
-  /// ever seen by the model. Appending to the existing user turn (rather than
-  /// inserting a new message) keeps role alternation intact, which Claude and
-  /// Gemini require. Best-effort: any failure falls back to the original list.
-  Future<List<OllamaMessage>> _maybeAugmentWithWebSearch(
+  /// Prepares the actual send: returns the message list to stream and the chat
+  /// (with any system-prompt addons) to send it under.
+  ///
+  /// Web search, when enabled, runs a two-step client-side loop:
+  ///   1. A cheap *decision pass* asks the model whether the latest message
+  ///      needs fresh external info. The model replies with a `<search>` query
+  ///      or `<nosearch>` — so we don't search every message.
+  ///   2. Only if it asked, we fetch results (surfacing "Searching…") and
+  ///      append them to the latest user turn for the answer pass.
+  /// The web-search and artifacts system-prompt addons are appended to the
+  /// chat's own system prompt regardless of what that prompt says.
+  Future<(List<OllamaMessage>, OllamaChat)> _prepareSend(
     OllamaChat chat,
   ) async {
-    if (!chat.options.webSearch || !_webSearch.isConfigured) {
-      return _messages;
+    var outgoing = _messages;
+    var systemAddon = '';
+
+    if (chat.options.webSearch && _webSearch.isConfigured) {
+      systemAddon += WebSearchConstants.systemPromptAddon;
+      String? context;
+      try {
+        context = await _runWebSearchPrePass(chat);
+      } catch (_) {
+        context = null; // best-effort; fall back to a normal send
+      }
+      if (context != null) {
+        outgoing = _appendToLastUser(_messages, context);
+      }
     }
 
-    final lastUserIndex =
-        _messages.lastIndexWhere((m) => m.role == OllamaMessageRole.user);
-    if (lastUserIndex == -1) return _messages;
+    if (chat.options.artifacts) {
+      systemAddon += ArtifactConstants.systemPromptAddon;
+    }
 
-    final userMessage = _messages[lastUserIndex];
-    final context = await _webSearch.buildContext(userMessage.content);
-    if (context == null) return _messages;
+    final effectiveChat =
+        systemAddon.isEmpty ? chat : _withSystemAddon(chat, systemAddon);
+    return (outgoing, effectiveChat);
+  }
 
-    final augmented = List<OllamaMessage>.from(_messages);
-    augmented[lastUserIndex] = OllamaMessage(
-      '${userMessage.content}\n\n$context',
+  /// Runs the decision pass and, if the model asks for a search, fetches and
+  /// formats results. Returns the injectable context block, or null when no
+  /// search is wanted / nothing is found. Manages the "Searching…" state.
+  Future<String?> _runWebSearchPrePass(OllamaChat chat) async {
+    final lastUser = _messages.lastWhere(
+      (m) => m.role == OllamaMessageRole.user,
+      orElse: () => _messages.last,
+    );
+
+    // Decision pass — buffered, never displayed. Uses only the latest user
+    // message under a focused decision system prompt to keep it cheap.
+    final decisionChat = OllamaChat(
+      id: chat.id,
+      model: chat.model,
+      title: chat.title,
+      systemPrompt: WebSearchConstants.decisionSystemPrompt,
+      options: chat.options,
+      provider: chat.provider,
+    );
+    final decision = await _collectResponse(
+      [OllamaMessage(lastUser.content, role: OllamaMessageRole.user)],
+      decisionChat,
+    );
+
+    final query = _extractSearchQuery(decision);
+    if (query == null) return null; // model chose not to search
+
+    // Bail if the user cancelled while the decision pass ran.
+    if (!_activeChatStreams.containsKey(chat.id)) return null;
+
+    _searchingChats.add(chat.id);
+    notifyListeners();
+    try {
+      return await _webSearch.buildContext(query);
+    } finally {
+      _searchingChats.remove(chat.id);
+      notifyListeners();
+    }
+  }
+
+  /// Drains a chat stream into a single string. Used for the (short, non-
+  /// displayed) web-search decision pass.
+  Future<String> _collectResponse(
+    List<OllamaMessage> messages,
+    OllamaChat chat,
+  ) async {
+    final service = _registry.forChat(chat);
+    final buffer = StringBuffer();
+    await for (final message in service.chatStream(messages, chat: chat)) {
+      buffer.write(message.content);
+    }
+    return buffer.toString();
+  }
+
+  /// Pulls the query out of a `<search>…</search>` directive, or null if the
+  /// model didn't ask to search (e.g. it replied `<nosearch>`).
+  String? _extractSearchQuery(String text) {
+    final match =
+        RegExp(r'<search>(.*?)</search>', dotAll: true).firstMatch(text);
+    final query = match?.group(1)?.trim();
+    return (query == null || query.isEmpty) ? null : query;
+  }
+
+  /// Returns a NEW message list with [extra] appended to the latest user turn's
+  /// content. The stored [_messages] (and the visible bubble) are untouched —
+  /// the injected context is only ever seen by the model. Appending to the
+  /// existing user turn (vs. inserting a message) keeps role alternation
+  /// intact, which Claude and Gemini require.
+  List<OllamaMessage> _appendToLastUser(
+    List<OllamaMessage> messages,
+    String extra,
+  ) {
+    final index =
+        messages.lastIndexWhere((m) => m.role == OllamaMessageRole.user);
+    if (index == -1) return messages;
+
+    final userMessage = messages[index];
+    final copy = List<OllamaMessage>.from(messages);
+    copy[index] = OllamaMessage(
+      '${userMessage.content}\n\n$extra',
       id: userMessage.id,
       role: userMessage.role,
       images: userMessage.images,
       createdAt: userMessage.createdAt,
     );
-    return augmented;
+    return copy;
   }
 
-  /// When artifacts are enabled for [chat], return a derived chat whose system
-  /// prompt has the artifact instructions appended. The derived chat keeps the
+  /// Returns a derived chat whose system prompt has [addon] appended. Keeps the
   /// same id/model/options/provider — services only read those plus the system
   /// prompt — so this changes nothing about routing or persistence; it only
-  /// shapes what the model is told for this one request. Returns [chat]
-  /// unchanged when artifacts are off.
-  OllamaChat _withArtifactInstructions(OllamaChat chat) {
-    if (!chat.options.artifacts) return chat;
-
+  /// shapes what the model is told for this one request.
+  OllamaChat _withSystemAddon(OllamaChat chat, String addon) {
     final base = chat.systemPrompt ?? '';
     return OllamaChat(
       id: chat.id,
       model: chat.model,
       title: chat.title,
-      systemPrompt: base + ArtifactConstants.systemPromptAddon,
+      systemPrompt: base + addon,
       options: chat.options,
       provider: chat.provider,
     );
