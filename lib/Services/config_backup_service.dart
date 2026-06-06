@@ -30,6 +30,7 @@ class ConfigBackupService {
     'openai_base_url',
     'google_api_key',
     'ollama_api_token',
+    'serpapi_api_key',
   ];
 
   /// Hive 'settings' keys that are safe, useful config (not secrets, not
@@ -38,6 +39,8 @@ class ConfigBackupService {
     'serverAddress',
     'serverAddressBackup',
     'serverUseBackup',
+    'web_search_backend',
+    'searxng_url',
   ];
 
   /// Read everything into a portable JSON string.

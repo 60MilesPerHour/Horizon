@@ -10,6 +10,7 @@ import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/chat_export_service.dart';
+import 'package:horizon/Services/web_search_service.dart';
 import 'package:horizon/Widgets/flexible_text.dart';
 
 import 'ollama_bottom_sheet_header.dart';
@@ -94,6 +95,11 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
           ],
         ),
         // The chat configurations section
+        const SizedBox(height: 16),
+        _WebSearchTile(
+          value: _chatOptions.webSearch,
+          onChanged: (v) => setState(() => _chatOptions.webSearch = v),
+        ),
         const SizedBox(height: 16),
         _BottomSheetTextField(
           initialValue: widget.arguments.systemPrompt,
@@ -676,6 +682,43 @@ enum _BottomSheetTextFieldType {
 
 enum ChatConfigureBottomSheetAction {
   delete,
+}
+
+/// Per-chat web-search toggle. When on, each prompt is enriched with live
+/// search results before being sent to the model — works for every provider.
+/// The subtitle nudges the user to Settings when no backend is configured yet.
+class _WebSearchTile extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _WebSearchTile({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final configured = context.read<WebSearchService>().isConfigured;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        secondary: const Icon(Icons.travel_explore_outlined),
+        title: const Text('Web search'),
+        subtitle: Text(
+          configured
+              ? 'Search the web and feed results to the model on every message.'
+              : 'Set up a search backend in Settings to enable this.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12.0),
+      ),
+    );
+  }
 }
 
 /// Tri-state toggle for the Ollama API's `think` field. Null = don't send,

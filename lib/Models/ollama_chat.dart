@@ -117,6 +117,12 @@ class OllamaChatOptions {
   /// Models without a thinking phase ignore this flag.
   bool? think;
 
+  /// Whether to run a web search on each prompt and inject the results into
+  /// the model's context. Provider-agnostic (works for every backend) because
+  /// it's plain context, not a tool protocol. Persisted per-chat. Like
+  /// [think], this is NOT part of the Ollama `options` payload — see [toMap].
+  bool webSearch;
+
   /// Creates an instance of [OllamaChatOptions] with default values.
   OllamaChatOptions({
     int? mirostat,
@@ -133,7 +139,9 @@ class OllamaChatOptions {
     double? topP,
     double? minP,
     this.think,
-  })  : mirostat = mirostat ?? 0,
+    bool? webSearch,
+  })  : webSearch = webSearch ?? false,
+        mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
         mirostatTau = mirostatTau ?? 5.0,
         contextSize = contextSize ?? 0,
@@ -168,6 +176,7 @@ class OllamaChatOptions {
       topP: map['top_p']?.toDouble(),
       minP: map['min_p']?.toDouble(),
       think: map['think'] is bool ? map['think'] as bool : null,
+      webSearch: map['web_search'] is bool ? map['web_search'] as bool : null,
     );
   }
 
@@ -203,6 +212,7 @@ class OllamaChatOptions {
   String toJson() {
     final m = toMap();
     if (think != null) m['think'] = think;
+    if (webSearch) m['web_search'] = true;
     return jsonEncode(m);
   }
 }

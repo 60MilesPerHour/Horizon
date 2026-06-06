@@ -74,6 +74,7 @@ void main() async {
   String? openaiBaseUrl;
   String? geminiKey;
   String? ollamaToken;
+  String? serpApiKey;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
@@ -81,9 +82,20 @@ void main() async {
     openaiBaseUrl = await storage.read(key: 'openai_base_url');
     geminiKey = await storage.read(key: 'google_api_key');
     ollamaToken = await storage.read(key: 'ollama_api_token');
+    serpApiKey = await storage.read(key: 'serpapi_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
+
+  // Web-search config: backend choice + SearXNG URL live in the (non-secret)
+  // settings box; the SerpAPI key lives in secure storage above.
+  final settingsBox = Hive.box('settings');
+  final webSearchService = WebSearchService(
+    backend: WebSearchBackend.fromString(
+        settingsBox.get('web_search_backend') as String?),
+    serpApiKey: serpApiKey,
+    searxngUrl: settingsBox.get('searxng_url') as String?,
+  );
 
   final ollamaService = OllamaService(apiToken: ollamaToken);
   final claudeService = ClaudeService(apiKey: claudeKey);
@@ -104,6 +116,7 @@ void main() async {
         Provider(create: (_) => openaiService),
         Provider(create: (_) => geminiService),
         Provider(create: (_) => registry),
+        Provider(create: (_) => webSearchService),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
@@ -112,6 +125,7 @@ void main() async {
           create: (context) => ChatProvider(
             registry: context.read(),
             databaseService: context.read(),
+            webSearch: context.read(),
           ),
         ),
         ChangeNotifierProvider(

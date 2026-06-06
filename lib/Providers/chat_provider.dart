@@ -14,10 +14,12 @@ import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
+import 'package:horizon/Services/web_search_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ChatServiceRegistry _registry;
   final DatabaseService _databaseService;
+  final WebSearchService _webSearch;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -73,8 +75,10 @@ class ChatProvider extends ChangeNotifier {
   ChatProvider({
     required ChatServiceRegistry registry,
     required DatabaseService databaseService,
+    required WebSearchService webSearch,
   })  : _registry = registry,
-        _databaseService = databaseService {
+        _databaseService = databaseService,
+        _webSearch = webSearch {
     _initialize();
   }
 
@@ -347,7 +351,8 @@ class ChatProvider extends ChangeNotifier {
     if (_messages.isEmpty) return null;
 
     final service = _registry.forChat(associatedChat);
-    final stream = service.chatStream(_messages, chat: associatedChat);
+    final outgoing = await _maybeAugmentWithWebSearch(associatedChat);
+    final stream = service.chatStream(outgoing, chat: associatedChat);
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
@@ -441,6 +446,39 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     return streamingMessage;
+  }
+
+  /// If web search is enabled for [chat] and the backend is configured, run a
+  /// search on the latest user prompt and return a NEW message list with the
+  /// results appended to that prompt's content. The stored [_messages] (and
+  /// the visible user bubble) are left untouched — the search context is only
+  /// ever seen by the model. Appending to the existing user turn (rather than
+  /// inserting a new message) keeps role alternation intact, which Claude and
+  /// Gemini require. Best-effort: any failure falls back to the original list.
+  Future<List<OllamaMessage>> _maybeAugmentWithWebSearch(
+    OllamaChat chat,
+  ) async {
+    if (!chat.options.webSearch || !_webSearch.isConfigured) {
+      return _messages;
+    }
+
+    final lastUserIndex =
+        _messages.lastIndexWhere((m) => m.role == OllamaMessageRole.user);
+    if (lastUserIndex == -1) return _messages;
+
+    final userMessage = _messages[lastUserIndex];
+    final context = await _webSearch.buildContext(userMessage.content);
+    if (context == null) return _messages;
+
+    final augmented = List<OllamaMessage>.from(_messages);
+    augmented[lastUserIndex] = OllamaMessage(
+      '${userMessage.content}\n\n$context',
+      id: userMessage.id,
+      role: userMessage.role,
+      images: userMessage.images,
+      createdAt: userMessage.createdAt,
+    );
+    return augmented;
   }
 
   Future<void> regenerateMessage(OllamaMessage message) async {
