@@ -101,6 +101,11 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
           onChanged: (v) => setState(() => _chatOptions.webSearch = v),
         ),
         const SizedBox(height: 16),
+        _ArtifactsTile(
+          value: _chatOptions.artifacts,
+          onChanged: (v) => setState(() => _chatOptions.artifacts = v),
+        ),
+        const SizedBox(height: 16),
         _BottomSheetTextField(
           initialValue: widget.arguments.systemPrompt,
           labelText: 'System Prompt',
@@ -712,6 +717,40 @@ class _WebSearchTile extends StatelessWidget {
           configured
               ? 'Search the web and feed results to the model on every message.'
               : 'Set up a search backend in Settings to enable this.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12.0),
+      ),
+    );
+  }
+}
+
+/// Per-chat artifacts toggle. When on, the model is asked (via a system-prompt
+/// addon) to wrap substantial standalone deliverables in `<artifact>` tags,
+/// which render as a card + dedicated viewer. Works for every provider.
+class _ArtifactsTile extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _ArtifactsTile({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        secondary: const Icon(Icons.dashboard_customize_outlined),
+        title: const Text('Artifacts'),
+        subtitle: Text(
+          'Render full documents and code files as a card you can open, copy, '
+          'and export. Short snippets stay inline.',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

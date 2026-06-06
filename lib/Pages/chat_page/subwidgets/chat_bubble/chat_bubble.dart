@@ -7,6 +7,7 @@ import 'package:horizon/Models/ollama_message.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'chat_bubble_actions.dart';
+import 'chat_bubble_artifact_block.dart';
 import 'chat_bubble_image.dart';
 import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart';
@@ -14,6 +15,7 @@ import 'chat_bubble_think_block.dart';
 final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
   <md.BlockSyntax>[
     ThinkBlockSyntax(),
+    ArtifactBlockSyntax(),
     ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
   ],
   <md.InlineSyntax>[
@@ -26,6 +28,7 @@ final TextStyle _markdownCodeStyle = GoogleFonts.sourceCodePro();
 
 final Map<String, MarkdownElementBuilder> _markdownBuilders = {
   'think': ThinkBlockBuilder(),
+  'artifact': ArtifactBlockBuilder(),
 };
 
 class ChatBubble extends StatefulWidget {

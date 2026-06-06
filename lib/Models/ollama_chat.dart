@@ -123,6 +123,13 @@ class OllamaChatOptions {
   /// [think], this is NOT part of the Ollama `options` payload — see [toMap].
   bool webSearch;
 
+  /// Whether to ask the model to emit substantial standalone deliverables
+  /// (full documents, complete files) wrapped in `<artifact>` tags, which the
+  /// client renders as a collapsed card + a dedicated viewer instead of inline
+  /// text. Short snippets stay as normal code blocks. Persisted per-chat;
+  /// NOT part of the Ollama `options` payload — see [toMap].
+  bool artifacts;
+
   /// Creates an instance of [OllamaChatOptions] with default values.
   OllamaChatOptions({
     int? mirostat,
@@ -140,7 +147,9 @@ class OllamaChatOptions {
     double? minP,
     this.think,
     bool? webSearch,
+    bool? artifacts,
   })  : webSearch = webSearch ?? false,
+        artifacts = artifacts ?? false,
         mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
         mirostatTau = mirostatTau ?? 5.0,
@@ -177,6 +186,7 @@ class OllamaChatOptions {
       minP: map['min_p']?.toDouble(),
       think: map['think'] is bool ? map['think'] as bool : null,
       webSearch: map['web_search'] is bool ? map['web_search'] as bool : null,
+      artifacts: map['artifacts'] is bool ? map['artifacts'] as bool : null,
     );
   }
 
@@ -213,6 +223,7 @@ class OllamaChatOptions {
     final m = toMap();
     if (think != null) m['think'] = think;
     if (webSearch) m['web_search'] = true;
+    if (artifacts) m['artifacts'] = true;
     return jsonEncode(m);
   }
 }

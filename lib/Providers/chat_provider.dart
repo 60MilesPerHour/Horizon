@@ -352,7 +352,8 @@ class ChatProvider extends ChangeNotifier {
 
     final service = _registry.forChat(associatedChat);
     final outgoing = await _maybeAugmentWithWebSearch(associatedChat);
-    final stream = service.chatStream(outgoing, chat: associatedChat);
+    final effectiveChat = _withArtifactInstructions(associatedChat);
+    final stream = service.chatStream(outgoing, chat: effectiveChat);
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
@@ -479,6 +480,26 @@ class ChatProvider extends ChangeNotifier {
       createdAt: userMessage.createdAt,
     );
     return augmented;
+  }
+
+  /// When artifacts are enabled for [chat], return a derived chat whose system
+  /// prompt has the artifact instructions appended. The derived chat keeps the
+  /// same id/model/options/provider — services only read those plus the system
+  /// prompt — so this changes nothing about routing or persistence; it only
+  /// shapes what the model is told for this one request. Returns [chat]
+  /// unchanged when artifacts are off.
+  OllamaChat _withArtifactInstructions(OllamaChat chat) {
+    if (!chat.options.artifacts) return chat;
+
+    final base = chat.systemPrompt ?? '';
+    return OllamaChat(
+      id: chat.id,
+      model: chat.model,
+      title: chat.title,
+      systemPrompt: base + ArtifactConstants.systemPromptAddon,
+      options: chat.options,
+      provider: chat.provider,
+    );
   }
 
   Future<void> regenerateMessage(OllamaMessage message) async {
