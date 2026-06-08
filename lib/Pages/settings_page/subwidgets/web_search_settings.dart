@@ -21,6 +21,8 @@ class WebSearchSettings extends StatefulWidget {
 class _WebSearchSettingsState extends State<WebSearchSettings> {
   final _serpKeyController = TextEditingController();
   final _searxngUrlController = TextEditingController();
+  final _serpKeyFocus = FocusNode();
+  final _searxngUrlFocus = FocusNode();
   bool _obscure = true;
   bool _loaded = false;
   WebSearchBackend _backend = WebSearchBackend.off;
@@ -29,6 +31,16 @@ class _WebSearchSettingsState extends State<WebSearchSettings> {
   void initState() {
     super.initState();
     _load();
+    // Persist on focus-loss too. The save icon / Enter aren't enough: pasting a
+    // key and navigating away (the common case) would otherwise drop it,
+    // leaving backend=serpapi with an empty key — silently unconfigured.
+    _serpKeyFocus.addListener(_saveOnUnfocus);
+    _searxngUrlFocus.addListener(_saveOnUnfocus);
+  }
+
+  void _saveOnUnfocus() {
+    if (!_loaded) return;
+    if (!_serpKeyFocus.hasFocus && !_searxngUrlFocus.hasFocus) _save();
   }
 
   Future<void> _load() async {
@@ -72,6 +84,10 @@ class _WebSearchSettingsState extends State<WebSearchSettings> {
 
   @override
   void dispose() {
+    _serpKeyFocus.removeListener(_saveOnUnfocus);
+    _searxngUrlFocus.removeListener(_saveOnUnfocus);
+    _serpKeyFocus.dispose();
+    _searxngUrlFocus.dispose();
     _serpKeyController.dispose();
     _searxngUrlController.dispose();
     super.dispose();
@@ -127,6 +143,7 @@ class _WebSearchSettingsState extends State<WebSearchSettings> {
           const SizedBox(height: 16),
           TextField(
             controller: _serpKeyController,
+            focusNode: _serpKeyFocus,
             enabled: _loaded,
             obscureText: _obscure,
             decoration: InputDecoration(
@@ -155,6 +172,7 @@ class _WebSearchSettingsState extends State<WebSearchSettings> {
           const SizedBox(height: 16),
           TextField(
             controller: _searxngUrlController,
+            focusNode: _searxngUrlFocus,
             enabled: _loaded,
             decoration: const InputDecoration(
               labelText: 'SearXNG Base URL',

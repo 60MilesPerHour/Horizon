@@ -514,12 +514,17 @@ class ChatProvider extends ChangeNotifier {
 
     // Decision pass — buffered, never displayed. Uses only the latest user
     // message under a focused decision system prompt to keep it cheap.
+    // The decision reply is tiny (`<search>query</search>` or `<nosearch>`),
+    // but a model that ignores the directive will otherwise generate a full
+    // answer here that we just throw away. Cap the output hard and force
+    // thinking off so the budget isn't spent reasoning before the tag. The cap
+    // maps to num_predict / max_tokens / maxOutputTokens across every provider.
     final decisionChat = OllamaChat(
       id: chat.id,
       model: chat.model,
       title: chat.title,
       systemPrompt: WebSearchConstants.decisionSystemPrompt,
-      options: chat.options,
+      options: OllamaChatOptions(maxTokens: 64, think: false),
       provider: chat.provider,
     );
     final decision = await _collectResponse(

@@ -709,8 +709,10 @@ class _WebSearchTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(8.0),
       ),
       child: SwitchListTile(
-        value: value,
-        onChanged: onChanged,
+        // Without a configured backend the feature is a silent no-op, so don't
+        // let the switch read "on" — disable it and point the user at Settings.
+        value: configured && value,
+        onChanged: configured ? onChanged : null,
         secondary: const Icon(Icons.travel_explore_outlined),
         title: const Text('Web search'),
         subtitle: Text(
