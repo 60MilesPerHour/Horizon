@@ -5,6 +5,7 @@ import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
 import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Pages/main_page.dart';
+import 'package:horizon/Pages/ollama_models_page/ollama_models_page.dart';
 import 'package:horizon/Pages/settings_page/settings_page.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/services.dart';
@@ -199,6 +200,12 @@ class HorizonApp extends StatelessWidget {
 
               return MaterialPageRoute(
                 builder: (context) => SettingsPage(arguments: args),
+              );
+            }
+
+            if (settings.name == '/ollama-models') {
+              return MaterialPageRoute(
+                builder: (context) => const OllamaModelsPage(),
               );
             }
 

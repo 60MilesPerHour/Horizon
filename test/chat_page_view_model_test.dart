@@ -7,13 +7,13 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-import 'package:reins/Models/ollama_chat.dart';
-import 'package:reins/Models/ollama_exception.dart';
-import 'package:reins/Models/ollama_message.dart';
-import 'package:reins/Models/ollama_model.dart';
-import 'package:reins/Pages/chat_page/chat_page_view_model.dart';
-import 'package:reins/Providers/chat_provider.dart';
-import 'package:reins/Services/services.dart';
+import 'package:horizon/Models/ollama_chat.dart';
+import 'package:horizon/Models/ollama_exception.dart';
+import 'package:horizon/Models/ollama_message.dart';
+import 'package:horizon/Models/ollama_model.dart';
+import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
+import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/services.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +45,12 @@ void main() {
       chatProvider: fakeChatProvider,
       permissionService: fakePermissionService,
       imageService: fakeImageService,
+      registry: ChatServiceRegistry(
+        ollama: OllamaService(),
+        claude: ClaudeService(),
+        openai: OpenAIService(),
+        gemini: GeminiService(),
+      ),
     );
   });
 
@@ -430,6 +436,19 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   Future<void> createNewChat(OllamaModel model) async {
     createNewChatCalled = true;
     _currentChat = createTestChat('new-chat-id');
+  }
+
+  @override
+  Future<void> createNewChatAndSendPrompt(
+    OllamaModel model,
+    String text, {
+    List<File>? images,
+  }) async {
+    createNewChatCalled = true;
+    _currentChat = createTestChat('new-chat-id');
+    sendPromptCalled = true;
+    lastSentPrompt = text;
+    lastSentImages = images;
   }
 
   @override

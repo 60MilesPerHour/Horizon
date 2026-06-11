@@ -15,6 +15,7 @@ import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
 import 'package:horizon/Services/web_search_service.dart';
+import 'package:horizon/Utils/http_error_formatter.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ChatServiceRegistry _registry;
@@ -341,12 +342,11 @@ class ChatProvider extends ChangeNotifier {
           await _streamOllamaMessage(associatedChat, outgoing, effectiveChat);
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
-    } on SocketException catch (_) {
-      _chatErrors[associatedChat.id] = OllamaException(
-        'Network connection lost. Check your server address or internet connection.',
-      );
     } catch (error) {
-      _chatErrors[associatedChat.id] = OllamaException("Something went wrong.");
+      // Never flatten to a generic message — format whatever actually
+      // happened (socket drop, timeout, TLS failure, parse error, ...).
+      _chatErrors[associatedChat.id] =
+          OllamaException(HttpErrorFormatter.formatException(error));
     } finally {
       // Remove the chat from the active chat streams
       _activeChatStreams.remove(associatedChat.id);

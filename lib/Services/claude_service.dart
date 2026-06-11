@@ -9,6 +9,7 @@ import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/model_capabilities.dart';
 import 'package:horizon/Services/chat_service.dart';
+import 'package:horizon/Utils/horizon_http.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
 /// Anthropic Messages API client.
@@ -41,7 +42,7 @@ class ClaudeService extends ChatService {
     }
 
     try {
-      final response = await http
+      final response = await HorizonHttp.client
           .get(Uri.parse('$_baseUrl/v1/models'), headers: _headers)
           .timeout(const Duration(seconds: 30));
 
@@ -67,10 +68,12 @@ class ClaudeService extends ChatService {
       throw OllamaException(
         '[Claude] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}',
       );
-    } on TimeoutException {
-      throw OllamaException('[Claude] API timed out.');
-    } on SocketException {
-      throw OllamaException('[Claude] Network error contacting API.');
+    } on TimeoutException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
+    } on SocketException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
+    } on http.ClientException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
     }
   }
 
@@ -82,9 +85,6 @@ class ClaudeService extends ChatService {
     if (!isConfigured) {
       throw OllamaException('[Claude] API key not set.');
     }
-
-    final request = http.Request('POST', Uri.parse('$_baseUrl/v1/messages'));
-    request.headers.addAll(_headers);
 
     final body = <String, dynamic>{
       'model': chat.model,
@@ -100,10 +100,20 @@ class ClaudeService extends ChatService {
     if (chat.systemPrompt != null && chat.systemPrompt!.isNotEmpty) {
       body['system'] = chat.systemPrompt;
     }
-    request.body = json.encode(body);
+    final encodedBody = json.encode(body);
 
     try {
-      final response = await request.send().timeout(const Duration(seconds: 30));
+      // Retried once on connection-level failures before any bytes arrive;
+      // the request is rebuilt per attempt so a retry is always safe.
+      final response = await HorizonHttp.sendWithRetry(
+        () {
+          final request = http.Request('POST', Uri.parse('$_baseUrl/v1/messages'));
+          request.headers.addAll(_headers);
+          request.body = encodedBody;
+          return request;
+        },
+        timeout: const Duration(seconds: 60),
+      );
 
       if (response.statusCode != 200) {
         final text = await response.stream.bytesToString();
@@ -112,11 +122,18 @@ class ClaudeService extends ChatService {
         );
       }
 
-      yield* _parseSse(response.stream, chat.model);
-    } on TimeoutException {
-      throw OllamaException('[Claude] API timed out.');
-    } on SocketException {
-      throw OllamaException('[Claude] Network error contacting API.');
+      // Stall guard: long enough for extended-thinking pauses, short enough
+      // to surface a dead connection instead of hanging on "Generating".
+      yield* _parseSse(
+        response.stream.stallGuard(const Duration(seconds: 180), '[Claude]'),
+        chat.model,
+      );
+    } on TimeoutException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
+    } on SocketException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
+    } on http.ClientException catch (e) {
+      throw OllamaException('[Claude] ${HttpErrorFormatter.formatException(e)}');
     }
   }
 

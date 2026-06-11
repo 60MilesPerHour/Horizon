@@ -38,17 +38,25 @@ class ChatServiceRegistry {
 
   List<ChatService> get all => [ollama, claude, openai, gemini];
 
-  /// Fetch models from every configured provider. Failures are swallowed
-  /// per-provider so one bad key doesn't hide the rest.
+  /// Fetch models from every configured provider. Per-provider failures are
+  /// tolerated so one bad key doesn't hide the rest — but if EVERY provider
+  /// fails, the first real error is rethrown so the UI can say what broke
+  /// instead of showing an empty list.
   Future<List<OllamaModel>> listAllModels() async {
     final services = all.where((s) => s.isConfigured).toList();
+    final errors = <Object>[];
     final results = await Future.wait(services.map((s) async {
       try {
         return await s.listModels();
-      } catch (_) {
+      } catch (e) {
+        errors.add(e);
         return <OllamaModel>[];
       }
     }));
-    return results.expand((m) => m).toList();
+    final models = results.expand((m) => m).toList();
+    if (models.isEmpty && errors.isNotEmpty) {
+      throw errors.first;
+    }
+    return models;
   }
 }

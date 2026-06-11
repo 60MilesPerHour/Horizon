@@ -9,6 +9,7 @@ import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/model_capabilities.dart';
 import 'package:horizon/Services/chat_service.dart';
+import 'package:horizon/Utils/horizon_http.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
 /// Google Gemini (Generative Language API) client.
@@ -40,7 +41,7 @@ class GeminiService extends ChatService {
 
     try {
       final url = Uri.parse('$_baseUrl/$_apiVersion/models?key=$_apiKey');
-      final response = await http.get(url).timeout(const Duration(seconds: 30));
+      final response = await HorizonHttp.client.get(url).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final body = json.decode(response.body) as Map<String, dynamic>;
@@ -84,10 +85,12 @@ class GeminiService extends ChatService {
       throw OllamaException(
         '[Gemini] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}',
       );
-    } on TimeoutException {
-      throw OllamaException('[Gemini] API timed out.');
-    } on SocketException {
-      throw OllamaException('[Gemini] Network error contacting API.');
+    } on TimeoutException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
+    } on SocketException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
+    } on http.ClientException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
     }
   }
 
@@ -103,8 +106,6 @@ class GeminiService extends ChatService {
     final url = Uri.parse(
       '$_baseUrl/$_apiVersion/models/${chat.model}:streamGenerateContent?alt=sse&key=$_apiKey',
     );
-    final request = http.Request('POST', url);
-    request.headers.addAll(_jsonHeaders);
 
     final body = <String, dynamic>{
       'contents': await _encodeContents(messages),
@@ -122,10 +123,20 @@ class GeminiService extends ChatService {
         ],
       };
     }
-    request.body = json.encode(body);
+    final encodedBody = json.encode(body);
 
     try {
-      final response = await request.send().timeout(const Duration(seconds: 30));
+      // Retried once on connection-level failures before any bytes arrive;
+      // the request is rebuilt per attempt so a retry is always safe.
+      final response = await HorizonHttp.sendWithRetry(
+        () {
+          final request = http.Request('POST', url);
+          request.headers.addAll(_jsonHeaders);
+          request.body = encodedBody;
+          return request;
+        },
+        timeout: const Duration(seconds: 60),
+      );
 
       if (response.statusCode != 200) {
         final text = await response.stream.bytesToString();
@@ -134,11 +145,18 @@ class GeminiService extends ChatService {
         );
       }
 
-      yield* _parseSse(response.stream, chat.model);
-    } on TimeoutException {
-      throw OllamaException('[Gemini] API timed out.');
-    } on SocketException {
-      throw OllamaException('[Gemini] Network error contacting API.');
+      // Stall guard: thinking models pause, dead connections hang — only the
+      // latter should ever exceed this.
+      yield* _parseSse(
+        response.stream.stallGuard(const Duration(seconds: 180), '[Gemini]'),
+        chat.model,
+      );
+    } on TimeoutException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
+    } on SocketException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
+    } on http.ClientException catch (e) {
+      throw OllamaException('[Gemini] ${HttpErrorFormatter.formatException(e)}');
     }
   }
 

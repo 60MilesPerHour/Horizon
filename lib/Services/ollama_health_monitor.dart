@@ -72,7 +72,9 @@ class OllamaHealthMonitor extends ChangeNotifier {
         null,
       );
     } else if (_ollama.isConfigured) {
-      _update(OllamaHealth.down, null, _lastError);
+      // Surface the actual failure from the service so the indicator can say
+      // WHY the server is down, not just that it is.
+      _update(OllamaHealth.down, null, _ollama.lastFailure ?? _lastError);
     }
   }
 

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:horizon/Utils/horizon_http.dart';
 
 /// Which search backend the web-search feature talks to.
 ///
@@ -131,7 +131,7 @@ class WebSearchService {
     });
 
     final response =
-        await http.get(uri).timeout(const Duration(seconds: 20));
+        await HorizonHttp.client.get(uri).timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) return const [];
 
     final body = json.decode(response.body) as Map<String, dynamic>;
@@ -183,7 +183,7 @@ class WebSearchService {
     });
 
     final response =
-        await http.get(uri).timeout(const Duration(seconds: 20));
+        await HorizonHttp.client.get(uri).timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) return const [];
 
     final body = json.decode(response.body) as Map<String, dynamic>;

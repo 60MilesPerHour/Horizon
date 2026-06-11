@@ -10,6 +10,7 @@ import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
 import 'package:horizon/Services/ollama_service.dart';
+import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:horizon/Widgets/ollama_bottom_sheet_header.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -175,6 +176,17 @@ class _ServerSettingsState extends State<ServerSettings> {
         ),
         const SizedBox(height: 24),
         const _OllamaTokenField(),
+        const SizedBox(height: 8),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.memory),
+          title: const Text('Manage server models'),
+          subtitle: const Text(
+            'See what\'s loaded in memory, load/unload, pull, and delete models on the server.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).pushNamed('/ollama-models'),
+        ),
       ],
     );
   }
@@ -293,8 +305,10 @@ class _ServerSettingsState extends State<ServerSettings> {
     Uri serverAddress,
   ) async {
     try {
+      // 4 s: generous enough for a high-latency VPN hop (ZeroTier relayed
+      // path), still fast enough for the local-network scan to finish quickly.
       final response =
-          await http.get(serverAddress).timeout(const Duration(seconds: 2));
+          await http.get(serverAddress).timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         return (OllamaRequestState.success, serverAddress);
@@ -374,7 +388,8 @@ class _ServerSettingsState extends State<ServerSettings> {
       _serverAddressErrorText = e.message;
       _requestState = OllamaRequestState.error;
     } catch (e) {
-      _serverAddressErrorText = 'Something went wrong while searching.';
+      _serverAddressErrorText =
+          'Network scan failed: ${HttpErrorFormatter.formatException(e)}';
       _requestState = OllamaRequestState.error;
     } finally {
       setState(() {});

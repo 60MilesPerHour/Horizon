@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:async/async.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:horizon/Models/model_capabilities.dart';
 
+import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/ollama_service.dart';
+import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:horizon/Widgets/ollama_bottom_sheet_header.dart';
 
 class ModelSelectionBottomSheet extends StatefulWidget {
@@ -30,6 +35,13 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
 
   OllamaModel? _selectedModel;
   List<OllamaModel> _models = [];
+
+  /// Names of Ollama models currently loaded in server memory (best-effort).
+  Set<String> _loadedModels = const {};
+
+  /// The actual error from the last failed fetch — shown to the user so they
+  /// can fix the cause instead of guessing.
+  String? _errorMessage;
 
   var _state = OllamaRequestState.uninitialized;
   late CancelableOperation _fetchOperation;
@@ -73,6 +85,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
     try {
       _models = await _chatProvider.fetchAvailableModels();
       _state = OllamaRequestState.success;
+      _errorMessage = null;
 
       // Update selection if we were searching by name (cache was empty)
       if (_selectedModel == null && widget.currentModelName != null) {
@@ -84,10 +97,28 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
       }
     } catch (e) {
       _state = OllamaRequestState.error;
+      _errorMessage = e is OllamaException
+          ? e.message
+          : HttpErrorFormatter.formatException(e);
     }
 
     if (mounted) {
       setState(() {});
+      // Best-effort: mark which Ollama models are already loaded in server
+      // memory. Failure here just means no indicators — never an error state.
+      unawaited(_fetchLoadedModels());
+    }
+  }
+
+  Future<void> _fetchLoadedModels() async {
+    final ollama = context.read<OllamaService>();
+    if (!ollama.isConfigured) return;
+    try {
+      final running = await ollama.listRunningModels();
+      if (!mounted) return;
+      setState(() => _loadedModels = running.map((m) => m.name).toSet());
+    } catch (_) {
+      // Indicators are decorative; stay silent.
     }
   }
 
@@ -130,11 +161,27 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
   Widget _buildBody(BuildContext context) {
     if (_state == OllamaRequestState.error) {
       return Center(
-        child: Text(
-          'An error occurred while fetching models.'
-          '\nCheck your server connection and try again.',
-          style: TextStyle(color: Theme.of(context).colorScheme.error),
-          textAlign: TextAlign.center,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(
+                _errorMessage ?? 'An error occurred while fetching models.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                onPressed: () {
+                  _fetchOperation =
+                      CancelableOperation.fromFuture(_fetchModels());
+                },
+              ),
+            ],
+          ),
         ),
       );
     } else if (_state == OllamaRequestState.loading && _models.isEmpty) {
@@ -151,6 +198,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
         child: _GroupedModelList(
           models: _models,
           selectedModel: _selectedModel,
+          loadedModels: _loadedModels,
           onSelected: (model) => setState(() => _selectedModel = model),
         ),
       );
@@ -163,11 +211,13 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
 class _GroupedModelList extends StatelessWidget {
   final List<OllamaModel> models;
   final OllamaModel? selectedModel;
+  final Set<String> loadedModels;
   final Function(OllamaModel) onSelected;
 
   const _GroupedModelList({
     required this.models,
     required this.selectedModel,
+    required this.loadedModels,
     required this.onSelected,
   });
 
@@ -213,6 +263,7 @@ class _GroupedModelList extends StatelessWidget {
         children.add(_ModelListTile(
           model: m,
           isSelected: selectedModel == m,
+          isLoaded: m.provider == 'ollama' && loadedModels.contains(m.name),
           onSelected: onSelected,
         ));
       }
@@ -225,11 +276,13 @@ class _GroupedModelList extends StatelessWidget {
 class _ModelListTile extends StatelessWidget {
   final OllamaModel model;
   final bool isSelected;
+  final bool isLoaded;
   final Function(OllamaModel) onSelected;
 
   const _ModelListTile({
     required this.model,
     required this.isSelected,
+    this.isLoaded = false,
     required this.onSelected,
   });
 
@@ -242,7 +295,27 @@ class _ModelListTile extends StatelessWidget {
       value: model,
       groupValue: isSelected ? model : null,
       onChanged: (_) => onSelected(model),
-      title: Text(model.name),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(child: Text(model.name, overflow: TextOverflow.ellipsis)),
+          if (isLoaded)
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0),
+              child: Tooltip(
+                message: 'Loaded in server memory',
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.green,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       subtitle: model.parameterSize.isNotEmpty
           ? Text(
               model.parameterSize,

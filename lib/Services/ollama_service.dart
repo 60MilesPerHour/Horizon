@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:horizon/Utils/horizon_http.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:horizon/Models/api/tags_response.dart';
+import 'package:horizon/Models/ollama_model_management.dart';
 import 'package:horizon/Models/api/show_response.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
@@ -45,6 +47,24 @@ class OllamaService extends ChatService {
   /// served the request; false if all candidates failed. Used by
   /// OllamaHealthMonitor to update the UI without an extra round-trip.
   void Function(bool success)? onRequestComplete;
+
+  /// The error from the most recent total failover failure (every candidate
+  /// URL failed). Cleared on the next success. Lets the health indicator say
+  /// WHY the server is down instead of just showing a red dot.
+  Object? _lastFailure;
+  Object? get lastFailure => _lastFailure;
+
+  /// Time-to-response-headers budget for chat/generate. Ollama only writes
+  /// headers after the model is loaded, so a cold load of a 27B model can
+  /// legitimately take minutes. Connect-level failures surface in ~6 s via
+  /// the shared client's connectionTimeout, so a long budget here doesn't
+  /// slow down failover.
+  static const Duration _chatHeadersTimeout = Duration(seconds: 180);
+
+  /// Max silence between stream chunks before we declare the connection dead.
+  /// Long enough for heavy prompt-eval pauses, short enough to catch a
+  /// silently dropped VPN route instead of hanging on "Generating" forever.
+  static const Duration _stallTimeout = Duration(seconds: 120);
 
   String get baseUrl => _activeUrl ?? _baseUrl;
 
@@ -153,6 +173,7 @@ class OllamaService extends ChatService {
         try {
           final result = await op(url);
           _activeUrl = url;
+          _lastFailure = null;
           onRequestComplete?.call(true);
           return result;
         } on SocketException catch (e, st) {
@@ -174,6 +195,7 @@ class OllamaService extends ChatService {
         }
       }
     }
+    _lastFailure = lastError;
     onRequestComplete?.call(false);
     Error.throwWithStackTrace(lastError ?? OllamaException('[Ollama] No server reachable.'), lastStack ?? StackTrace.current);
   }
@@ -184,9 +206,9 @@ class OllamaService extends ChatService {
   Future<void> ping() async {
     await _withFailover((base) async {
       final url = _build(base, '/api/tags');
-      final response = await http.get(url, headers: headers).timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => throw TimeoutException('Ollama ping timed out'),
+      final response = await HorizonHttp.client.get(url, headers: headers).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => throw TimeoutException('Ollama ping timed out (no reply within 4 s)'),
       );
       if (response.statusCode != 200) {
         throw OllamaException('[Ollama] ping failed: HTTP ${response.statusCode}');
@@ -210,7 +232,7 @@ class OllamaService extends ChatService {
   }) async {
     return _withFailover((base) async {
       final url = _build(base, "/api/generate");
-      final response = await http.post(
+      final response = await HorizonHttp.client.post(
         url,
         headers: headers,
         body: json.encode({
@@ -221,8 +243,8 @@ class OllamaService extends ChatService {
           if (chat.options.think != null) "think": chat.options.think,
           "stream": false,
         }),
-      ).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      ).timeout(const Duration(seconds: 120), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/generate within 120 s');
       });
 
       if (response.statusCode == 200) {
@@ -258,13 +280,15 @@ class OllamaService extends ChatService {
         if (chat.options.think != null) "think": chat.options.think,
         "stream": true,
       });
-      return request.send().timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      return HorizonHttp.client.send(request).timeout(_chatHeadersTimeout, onTimeout: () {
+        throw TimeoutException(
+            'Ollama accepted the connection but sent no response for ${_chatHeadersTimeout.inSeconds} s. '
+            'The server may be stuck loading the model — check it with `ollama ps`.');
       });
     });
 
     if (response.statusCode == 200) {
-      yield* _processStream(response.stream);
+      yield* _processStream(response.stream.stallGuard(_stallTimeout, '[Ollama]'));
     } else if (response.statusCode == 404) {
       throw OllamaException("[Ollama] ${chat.model} not found on the server.");
     } else if (response.statusCode == 500) {
@@ -292,7 +316,7 @@ class OllamaService extends ChatService {
     final encoded = await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt);
     return _withFailover((base) async {
       final url = _build(base, "/api/chat");
-      final response = await http.post(
+      final response = await HorizonHttp.client.post(
         url,
         headers: headers,
         body: json.encode({
@@ -302,8 +326,8 @@ class OllamaService extends ChatService {
           if (chat.options.think != null) "think": chat.options.think,
           "stream": false,
         }),
-      ).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      ).timeout(const Duration(seconds: 120), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/chat within 120 s');
       });
 
       if (response.statusCode == 200) {
@@ -339,13 +363,15 @@ class OllamaService extends ChatService {
         if (chat.options.think != null) "think": chat.options.think,
         "stream": true,
       });
-      return request.send().timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      return HorizonHttp.client.send(request).timeout(_chatHeadersTimeout, onTimeout: () {
+        throw TimeoutException(
+            'Ollama accepted the connection but sent no response for ${_chatHeadersTimeout.inSeconds} s. '
+            'The server may be stuck loading the model — check it with `ollama ps`.');
       });
     });
 
     if (response.statusCode == 200) {
-      yield* _processStream(response.stream);
+      yield* _processStream(response.stream.stallGuard(_stallTimeout, '[Ollama]'));
     } else if (response.statusCode == 404) {
       throw OllamaException("[Ollama] ${chat.model} not found on the server.");
     } else if (response.statusCode == 500) {
@@ -356,7 +382,7 @@ class OllamaService extends ChatService {
     }
   }
 
-  Stream<OllamaMessage> _processStream(Stream stream) async* {
+  Stream<OllamaMessage> _processStream(Stream<List<int>> stream) async* {
     String buffer = '';
 
     await for (var chunk in stream.transform(utf8.decoder)) {
@@ -367,12 +393,25 @@ class OllamaService extends ChatService {
 
       for (var line in lines) {
         if (line.isEmpty) continue;
+
+        Map<String, dynamic> jsonBody;
         try {
-          final jsonBody = json.decode(line);
-          yield OllamaMessage.fromJson(jsonBody);
+          jsonBody = json.decode(line) as Map<String, dynamic>;
         } catch (e) {
+          // Partial line split across chunks — stitch it onto the next one.
           buffer = line;
+          continue;
         }
+
+        // Ollama reports mid-generation failures (OOM, model crash, context
+        // overflow) as an {"error": "..."} line on an otherwise-200 stream.
+        // Previously this was swallowed and the reply just stopped silently.
+        final error = jsonBody['error'];
+        if (error != null) {
+          throw OllamaException('[Ollama] Server error during generation: $error');
+        }
+
+        yield OllamaMessage.fromJson(jsonBody);
       }
     }
   }
@@ -414,8 +453,8 @@ class OllamaService extends ChatService {
   Future<ApiTagsResponse> _fetchTags() async {
     return _withFailover((base) async {
       final url = _build(base, "/api/tags");
-      final response = await http.get(url, headers: headers).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      final response = await HorizonHttp.client.get(url, headers: headers).timeout(const Duration(seconds: 15), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/tags within 15 s');
       });
 
       if (response.statusCode == 200) {
@@ -443,12 +482,12 @@ class OllamaService extends ChatService {
     try {
       final url = _build(baseUrl, "/api/show");
 
-      final response = await http.post(
+      final response = await HorizonHttp.client.post(
         url,
         headers: headers,
         body: json.encode({"model": name}),
-      ).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/show within 10 s');
       });
 
       if (response.statusCode == 200) {
@@ -480,12 +519,12 @@ class OllamaService extends ChatService {
 
     await _withFailover((base) async {
       final url = _build(base, "/api/create");
-      final response = await http.post(
+      final response = await HorizonHttp.client.post(
         url,
         headers: headers,
         body: encoded,
-      ).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      ).timeout(const Duration(seconds: 60), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/create within 60 s');
       });
 
       if (response.statusCode == 200) {
@@ -501,13 +540,13 @@ class OllamaService extends ChatService {
   Future<void> deleteModel(String model) async {
     await _withFailover((base) async {
       final url = _build(base, "/api/delete");
-      final response = await http.delete(
-        url,
-        headers: headers,
-        body: json.encode({"model": model}),
-      ).timeout(Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Request timed out');
+      final request = http.Request("DELETE", url);
+      request.headers.addAll(headers);
+      request.body = json.encode({"model": model});
+      final streamed = await HorizonHttp.client.send(request).timeout(const Duration(seconds: 30), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/delete within 30 s');
       });
+      final response = await http.Response.fromStream(streamed);
 
       if (response.statusCode == 200) {
         return;
@@ -519,5 +558,113 @@ class OllamaService extends ChatService {
         throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
       }
     });
+  }
+
+  // ============================================================
+  // Server model management (load / unload / pull / running list)
+  // ============================================================
+
+  /// Lists models currently loaded in memory on the server (GET /api/ps).
+  Future<List<OllamaRunningModel>> listRunningModels() async {
+    return _withFailover((base) async {
+      final url = _build(base, "/api/ps");
+      final response = await HorizonHttp.client.get(url, headers: headers).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Ollama did not answer /api/ps within 10 s');
+      });
+
+      if (response.statusCode != 200) {
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
+      }
+      final jsonBody = json.decode(response.body) as Map<String, dynamic>;
+      final models = jsonBody['models'] as List<dynamic>? ?? const [];
+      return models
+          .map((m) => OllamaRunningModel.fromJson(m as Map<String, dynamic>))
+          .toList();
+    });
+  }
+
+  /// Loads [model] into server memory by sending an empty /api/generate
+  /// request. [keepAlive] follows Ollama syntax: "5m", "1h", "-1" (forever).
+  /// Returns when the model is resident — a cold load of a large model can
+  /// take minutes, hence the generous timeout. Not retried per URL so a slow
+  /// load can't trigger a second, competing load.
+  Future<void> loadModel(String model, {String keepAlive = "30m"}) async {
+    await _withFailover((base) async {
+      final url = _build(base, "/api/generate");
+      final response = await HorizonHttp.client.post(
+        url,
+        headers: headers,
+        body: json.encode({"model": model, "keep_alive": keepAlive, "stream": false}),
+      ).timeout(const Duration(minutes: 10), onTimeout: () {
+        throw TimeoutException('Loading $model took longer than 10 minutes — check the server with `ollama ps`.');
+      });
+
+      if (response.statusCode == 404) {
+        throw OllamaException("[Ollama] $model is not installed on the server.");
+      } else if (response.statusCode != 200) {
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
+      }
+    }, retriesPerUrl: 0);
+  }
+
+  /// Unloads [model] from server memory immediately (keep_alive: 0).
+  Future<void> unloadModel(String model) async {
+    await _withFailover((base) async {
+      final url = _build(base, "/api/generate");
+      final response = await HorizonHttp.client.post(
+        url,
+        headers: headers,
+        body: json.encode({"model": model, "keep_alive": 0, "stream": false}),
+      ).timeout(const Duration(seconds: 30), onTimeout: () {
+        throw TimeoutException('Ollama did not confirm the unload within 30 s');
+      });
+
+      if (response.statusCode != 200) {
+        throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}');
+      }
+    });
+  }
+
+  /// Downloads [model] onto the server (POST /api/pull), yielding progress
+  /// events. Throws OllamaException with the server's message on failure
+  /// (unknown model, no space, registry unreachable, ...).
+  Stream<OllamaPullProgress> pullModel(String model) async* {
+    final response = await _withFailover((base) async {
+      final url = _build(base, "/api/pull");
+      final request = http.Request("POST", url);
+      request.headers.addAll(headers);
+      request.body = json.encode({"model": model, "stream": true});
+      return HorizonHttp.client.send(request).timeout(const Duration(seconds: 60), onTimeout: () {
+        throw TimeoutException('Ollama did not start the pull within 60 s');
+      });
+    }, retriesPerUrl: 0);
+
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw OllamaException('[Ollama] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
+    }
+
+    String buffer = '';
+    // Stall guard is generous: between progress lines the server may be
+    // verifying multi-GB layers, which takes a while on spinning disks.
+    await for (var chunk in response.stream.stallGuard(const Duration(minutes: 5), '[Ollama pull]').transform(utf8.decoder)) {
+      chunk = buffer + chunk;
+      buffer = '';
+      for (final line in LineSplitter.split(chunk)) {
+        if (line.isEmpty) continue;
+        Map<String, dynamic> jsonBody;
+        try {
+          jsonBody = json.decode(line) as Map<String, dynamic>;
+        } catch (_) {
+          buffer = line;
+          continue;
+        }
+        final error = jsonBody['error'];
+        if (error != null) {
+          throw OllamaException('[Ollama] Pull failed: $error');
+        }
+        yield OllamaPullProgress.fromJson(jsonBody);
+      }
+    }
   }
 }

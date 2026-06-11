@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:horizon/Models/ollama_health.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
 import 'package:horizon/Services/ollama_health_monitor.dart';
+import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:provider/provider.dart';
 
 /// Small reachability dot for the chat app bar. Renders nothing when Ollama
@@ -67,7 +68,10 @@ class OllamaHealthIndicator extends StatelessWidget {
       case OllamaHealth.degraded:
         return 'Ollama: on backup URL\n${m.activeUrl ?? ''}';
       case OllamaHealth.down:
-        return 'Ollama: unreachable\nTap to refresh or open server settings';
+        final why = m.lastError != null
+            ? '\n${HttpErrorFormatter.formatException(m.lastError!)}'
+            : '';
+        return 'Ollama: unreachable$why\nTap to refresh or open server settings';
       case OllamaHealth.unknown:
         return 'Ollama: not configured';
     }
