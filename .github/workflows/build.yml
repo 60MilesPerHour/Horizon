@@ -130,7 +130,12 @@ jobs:
           retention-days: 30
 
   windows:
-    runs-on: windows-latest
+    # Pinned: windows-latest rolled to the windows-2025-vs2026 image
+    # (2026-06), which ships ONLY Visual Studio 2026. Flutter 3.27's CMake
+    # generator selection can't use it ("could not find any instance of
+    # Visual Studio"), and the VC++ redist bundling step below reads from
+    # the VS 2022 install path. windows-2022 is the known-good environment.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
