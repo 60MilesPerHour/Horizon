@@ -14,6 +14,7 @@ import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
+import 'package:horizon/Services/generation_keepalive.dart';
 import 'package:horizon/Services/web_search_service.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
@@ -333,6 +334,10 @@ class ChatProvider extends ChangeNotifier {
     // Stream the Ollama message
     OllamaMessage? ollamaMessage;
 
+    // Hold an Android foreground service for the duration of the stream so a
+    // brief app switch doesn't freeze the process and kill the connection.
+    await GenerationKeepalive.acquire();
+
     try {
       // Build the outgoing message list and effective system prompt. When web
       // search is on, this runs a decision pass and (only if the model asks)
@@ -342,15 +347,18 @@ class ChatProvider extends ChangeNotifier {
           await _streamOllamaMessage(associatedChat, outgoing, effectiveChat);
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
+      ollamaMessage = _salvagePartial(associatedChat);
     } catch (error) {
       // Never flatten to a generic message — format whatever actually
       // happened (socket drop, timeout, TLS failure, parse error, ...).
       _chatErrors[associatedChat.id] =
           OllamaException(HttpErrorFormatter.formatException(error));
+      ollamaMessage = _salvagePartial(associatedChat);
     } finally {
       // Remove the chat from the active chat streams
       _activeChatStreams.remove(associatedChat.id);
       _searchingChats.remove(associatedChat.id);
+      await GenerationKeepalive.release();
       notifyListeners();
     }
 
@@ -358,6 +366,16 @@ class ChatProvider extends ChangeNotifier {
     if (ollamaMessage != null) {
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
     }
+  }
+
+  /// If a stream died mid-response, rescue whatever text already arrived so
+  /// it gets persisted like any other message instead of silently vanishing
+  /// the next time the chat loads. The error box still shows alongside it.
+  OllamaMessage? _salvagePartial(OllamaChat chat) {
+    final partial = _activeChatStreams[chat.id];
+    if (partial == null || partial.content.isEmpty) return null;
+    partial.createdAt = DateTime.now();
+    return partial;
   }
 
   Future<OllamaMessage?> _streamOllamaMessage(
@@ -391,7 +409,11 @@ class ChatProvider extends ChangeNotifier {
         if (pending.isEmpty || streamingMessage == null) return;
         final s = pending.toString();
         pending.clear();
-        final n = (s.length ~/ 4).clamp(2, 48);
+        // Cap of 160 chars/tick (~5000 chars/s): thinking models and burst
+        // arrivals can drop thousands of characters at once, and the old cap
+        // of 48 left a backlog that then snapped onto screen all at once at
+        // stream end. 160 drains a 4K burst in ~1s while still animating.
+        final n = (s.length ~/ 4).clamp(2, 160);
         streamingMessage!.content += s.substring(0, n);
         if (n < s.length) pending.write(s.substring(n));
         // Update only the ValueNotifier — avoids a full-page rebuild.
@@ -409,7 +431,26 @@ class ChatProvider extends ChangeNotifier {
       }
     }
 
+    /// Animates out whatever is still buffered when the stream ends, instead
+    /// of dumping it onto screen in one frame. Models that "think" silently
+    /// and then emit the whole answer in a burst otherwise show a few words,
+    /// a long pause, then a wall of text appearing instantly.
+    Future<void> drainGently() async {
+      startTypewriter();
+      final deadline = DateTime.now().add(const Duration(seconds: 6));
+      while (pending.isNotEmpty &&
+          streamingMessage != null &&
+          DateTime.now().isBefore(deadline) &&
+          _activeChatStreams.containsKey(associatedChat.id)) {
+        await Future.delayed(const Duration(milliseconds: 32));
+      }
+      // Whatever remains (deadline hit, or user cancelled the tail
+      // animation) lands instantly — the content is already complete.
+      flushAll();
+    }
+
     bool cancelled = false;
+    bool completedNormally = false;
     try {
       await for (receivedMessage in stream) {
         if (_activeChatStreams.containsKey(associatedChat.id) == false) {
@@ -444,12 +485,18 @@ class ChatProvider extends ChangeNotifier {
 
         startTypewriter();
       }
+      completedNormally = true;
     } finally {
-      if (!cancelled) {
-        flushAll();
-      } else {
+      if (cancelled) {
         typewriter?.cancel();
         pending.clear();
+      } else if (completedNormally) {
+        // Natural completion: animate the buffered tail out smoothly.
+        await drainGently();
+      } else {
+        // Error mid-stream: flush instantly so the error isn't delayed
+        // behind an animation.
+        flushAll();
       }
       _streamSubscriptions.remove(associatedChat.id);
     }

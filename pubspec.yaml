@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 3.7.0+38
+version: 3.7.1+39
 
 environment:
   sdk: ^3.5.4
@@ -34,6 +34,10 @@ dependencies:
   # HTTP package for making network requests
   http: ^1.2.2
   async: ^2.11.0
+
+  # Android foreground service held while a response streams, so a brief
+  # app switch doesn't freeze the process and kill the connection
+  flutter_foreground_task: ^9.2.2
 
   # State management solution
   provider: ^6.1.2
