@@ -98,10 +98,18 @@ void main() async {
     searxngUrl: settingsBox.get('searxng_url') as String?,
   );
 
+  // Per-provider hard kill switches. Off by default → the app is Ollama-only
+  // until the user explicitly enables a cloud provider in Settings. This also
+  // prevents the old regression where the model list fixated on a cloud
+  // provider and never showed Ollama.
+  final claudeEnabled = settingsBox.get('enable_anthropic', defaultValue: false) as bool;
+  final openaiEnabled = settingsBox.get('enable_openai', defaultValue: false) as bool;
+  final geminiEnabled = settingsBox.get('enable_google', defaultValue: false) as bool;
+
   final ollamaService = OllamaService(apiToken: ollamaToken);
-  final claudeService = ClaudeService(apiKey: claudeKey);
-  final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl);
-  final geminiService = GeminiService(apiKey: geminiKey);
+  final claudeService = ClaudeService(apiKey: claudeKey, enabled: claudeEnabled);
+  final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl, enabled: openaiEnabled);
+  final geminiService = GeminiService(apiKey: geminiKey, enabled: geminiEnabled);
   final registry = ChatServiceRegistry(
     ollama: ollamaService,
     claude: claudeService,

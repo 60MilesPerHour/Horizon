@@ -21,13 +21,18 @@ class ClaudeService extends ChatService {
   set apiKey(String? value) => _apiKey = value ?? '';
   String get apiKey => _apiKey;
 
-  ClaudeService({String? apiKey}) : _apiKey = apiKey ?? '';
+  /// Hard kill switch. When false the provider is fully dead — no models
+  /// listed, no routing, cannot be selected — regardless of whether a key is
+  /// set. Defaults to off so the app is Ollama-only until explicitly enabled.
+  bool enabled;
+
+  ClaudeService({String? apiKey, this.enabled = false}) : _apiKey = apiKey ?? '';
 
   @override
   String get providerId => 'anthropic';
 
   @override
-  bool get isConfigured => _apiKey.isNotEmpty;
+  bool get isConfigured => enabled && _apiKey.isNotEmpty;
 
   Map<String, String> get _headers => {
         'x-api-key': _apiKey,

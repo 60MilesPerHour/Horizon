@@ -17,7 +17,12 @@ class OpenAIService extends ChatService {
   String _apiKey;
   String _baseUrl;
 
-  OpenAIService({String? apiKey, String? baseUrl})
+  /// Hard kill switch. When false the provider is fully dead — no models
+  /// listed, no routing, cannot be selected — regardless of whether a key is
+  /// set. Defaults to off so the app is Ollama-only until explicitly enabled.
+  bool enabled;
+
+  OpenAIService({String? apiKey, String? baseUrl, this.enabled = false})
       : _apiKey = apiKey ?? '',
         _baseUrl = baseUrl ?? 'https://api.openai.com';
 
@@ -31,7 +36,7 @@ class OpenAIService extends ChatService {
   String get providerId => 'openai';
 
   @override
-  bool get isConfigured => _apiKey.isNotEmpty;
+  bool get isConfigured => enabled && _apiKey.isNotEmpty;
 
   Map<String, String> get _headers => {
         'Authorization': 'Bearer $_apiKey',

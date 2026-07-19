@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/claude_service.dart';
@@ -24,16 +25,84 @@ class CloudProviderSettings extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'API keys are stored in your device\'s secure storage.',
+          'API keys are stored in your device\'s secure storage. Each provider '
+          'is off by default — flip its switch to bring it online. A disabled '
+          'provider is fully dead: no models, never selectable.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
+        _ProviderKillSwitch(
+          label: 'Claude (Anthropic)',
+          hiveKey: 'enable_anthropic',
+          onChanged: (v) => context.read<ClaudeService>().enabled = v,
+        ),
         const _AnthropicKeyField(),
         const SizedBox(height: 16),
+        _ProviderKillSwitch(
+          label: 'OpenAI',
+          hiveKey: 'enable_openai',
+          onChanged: (v) => context.read<OpenAIService>().enabled = v,
+        ),
         const _OpenAIKeyField(),
         const SizedBox(height: 16),
+        _ProviderKillSwitch(
+          label: 'Gemini (Google)',
+          hiveKey: 'enable_google',
+          onChanged: (v) => context.read<GeminiService>().enabled = v,
+        ),
         const _GeminiKeyField(),
       ],
+    );
+  }
+}
+
+/// Per-provider hard kill switch. Off means the provider is fully dead — its
+/// models never appear and it can never be selected — regardless of key state.
+/// Persists to the Hive `settings` box and mutates the live service.
+class _ProviderKillSwitch extends StatefulWidget {
+  final String label;
+  final String hiveKey;
+  final void Function(bool) onChanged;
+
+  const _ProviderKillSwitch({
+    required this.label,
+    required this.hiveKey,
+    required this.onChanged,
+  });
+
+  @override
+  State<_ProviderKillSwitch> createState() => _ProviderKillSwitchState();
+}
+
+class _ProviderKillSwitchState extends State<_ProviderKillSwitch> {
+  late bool _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled =
+        Hive.box('settings').get(widget.hiveKey, defaultValue: false) as bool;
+  }
+
+  void _toggle(bool value) {
+    setState(() => _enabled = value);
+    Hive.box('settings').put(widget.hiveKey, value);
+    widget.onChanged(value);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${widget.label} ${value ? 'enabled' : 'disabled'}'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(widget.label),
+      subtitle: Text(_enabled ? 'Enabled' : 'Disabled — models hidden'),
+      value: _enabled,
+      onChanged: _toggle,
     );
   }
 }
