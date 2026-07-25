@@ -60,7 +60,7 @@ jobs:
           # Multiple build-tools versions are installed — pick one, don't let
           # the glob turn the rest into arguments.
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          SIGNER=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 'Subject:')
+          SIGNER=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 'certificate DN:')
           echo "$SIGNER"
           case "$SIGNER" in
             *"CN=Android Debug"*)
