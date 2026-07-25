@@ -28,8 +28,42 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      # Without this the release build falls back to signingConfigs.debug, and
+      # each runner generates its OWN random ~/.android/debug.keystore — so
+      # every release was signed by a different key and Android refused the
+      # update with INSTALL_FAILED_UPDATE_INCOMPATIBLE. Fail loudly rather than
+      # silently shipping another un-updatable APK.
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing — refusing to build a debug-signed release."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/horizon-release.jks
+          cat > android/key.properties <<EOF
+          storeFile=horizon-release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+
       - name: Build APK
         run: flutter build apk --release
+
+      - name: Verify APK is release-signed
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          SIGNER=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -m1 'Subject:')
+          echo "$SIGNER"
+          case "$SIGNER" in
+            *"CN=Android Debug"*)
+              echo "::error::APK is debug-signed — users would have to uninstall to update."
+              exit 1 ;;
+          esac
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
