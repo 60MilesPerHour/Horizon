@@ -106,21 +106,64 @@ class OllamaService extends ChatService {
     _apiToken = value ?? '';
   }
 
-  /// The headers to include in all network requests. Built per-request so
-  /// the bearer token reflects the current setting.
-  Map<String, String> get headers {
+  /// Cloudflare Access service-token credentials. When both are set, every
+  /// request to an **https** endpoint carries `CF-Access-Client-Id` /
+  /// `CF-Access-Client-Secret`, which is how a non-interactive client gets
+  /// through an Access policy in front of a Cloudflare tunnel. Cloudflare
+  /// strips both headers before forwarding to the origin, so the Ollama
+  /// server never sees them.
+  ///
+  /// The https-only gate is deliberate: the primary server is typically a
+  /// plaintext `http://` LAN address, and shipping a long-lived secret over
+  /// cleartext to a host that ignores it is pure downside.
+  String _cfAccessClientId = '';
+  String get cfAccessClientId => _cfAccessClientId;
+  set cfAccessClientId(String? value) {
+    _cfAccessClientId = value ?? '';
+  }
+
+  String _cfAccessClientSecret = '';
+  String get cfAccessClientSecret => _cfAccessClientSecret;
+  set cfAccessClientSecret(String? value) {
+    _cfAccessClientSecret = value ?? '';
+  }
+
+  /// True when a complete Access service token is configured.
+  bool get hasCfAccessToken =>
+      _cfAccessClientId.isNotEmpty && _cfAccessClientSecret.isNotEmpty;
+
+  /// Headers for a request aimed at [base]. Built per-request so both the
+  /// bearer token and the Access credentials reflect the current settings,
+  /// and so the Access headers only ride along on the endpoints that need
+  /// them. See [cfAccessClientId] for why the scheme matters.
+  Map<String, String> headersFor(String base) {
     final h = <String, String>{'Content-Type': 'application/json'};
     if (_apiToken.isNotEmpty) {
       h['Authorization'] = 'Bearer $_apiToken';
     }
+    if (hasCfAccessToken && Uri.parse(base).scheme == 'https') {
+      h['CF-Access-Client-Id'] = _cfAccessClientId;
+      h['CF-Access-Client-Secret'] = _cfAccessClientSecret;
+    }
     return h;
   }
 
+  /// Headers for the currently active URL. Kept for callers outside the
+  /// failover loop, which don't have a candidate base in hand.
+  Map<String, String> get headers => headersFor(baseUrl);
+
   /// Creates a new instance of the Ollama service.
-  OllamaService({String? baseUrl, String? backupUrl, String? apiToken})
-      : _baseUrl = baseUrl ?? "http://localhost:11434",
+  OllamaService({
+    String? baseUrl,
+    String? backupUrl,
+    String? apiToken,
+    String? cfAccessClientId,
+    String? cfAccessClientSecret,
+  })  : _baseUrl = baseUrl ?? "http://localhost:11434",
         _backupUrl = (backupUrl == null || backupUrl.isEmpty) ? null : backupUrl,
         _apiToken = apiToken ?? '',
+        _cfAccessClientId = cfAccessClientId ?? '',
+        _cfAccessClientSecret = cfAccessClientSecret ?? '',
         _userSetAddress = baseUrl != null && baseUrl.isNotEmpty;
 
   /// Ordered list of URLs to try for the next request. Starts with whichever
@@ -206,7 +249,7 @@ class OllamaService extends ChatService {
   Future<void> ping() async {
     await _withFailover((base) async {
       final url = _build(base, '/api/tags');
-      final response = await HorizonHttp.client.get(url, headers: headers).timeout(
+      final response = await HorizonHttp.client.get(url, headers: headersFor(base)).timeout(
         const Duration(seconds: 4),
         onTimeout: () => throw TimeoutException('Ollama ping timed out (no reply within 4 s)'),
       );
@@ -234,7 +277,7 @@ class OllamaService extends ChatService {
       final url = _build(base, "/api/generate");
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(base),
         body: json.encode({
           "model": chat.model,
           "prompt": prompt,
@@ -271,7 +314,7 @@ class OllamaService extends ChatService {
     final response = await _withFailover((base) async {
       final url = _build(base, '/api/generate');
       final request = http.Request("POST", url);
-      request.headers.addAll(headers);
+      request.headers.addAll(headersFor(base));
       request.body = json.encode({
         "model": chat.model,
         "prompt": prompt,
@@ -318,7 +361,7 @@ class OllamaService extends ChatService {
       final url = _build(base, "/api/chat");
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(base),
         body: json.encode({
           "model": chat.model,
           "messages": encoded,
@@ -355,7 +398,7 @@ class OllamaService extends ChatService {
     final response = await _withFailover((base) async {
       final url = _build(base, '/api/chat');
       final request = http.Request("POST", url);
-      request.headers.addAll(headers);
+      request.headers.addAll(headersFor(base));
       request.body = json.encode({
         "model": chat.model,
         "messages": encoded,
@@ -453,7 +496,7 @@ class OllamaService extends ChatService {
   Future<ApiTagsResponse> _fetchTags() async {
     return _withFailover((base) async {
       final url = _build(base, "/api/tags");
-      final response = await HorizonHttp.client.get(url, headers: headers).timeout(const Duration(seconds: 15), onTimeout: () {
+      final response = await HorizonHttp.client.get(url, headers: headersFor(base)).timeout(const Duration(seconds: 15), onTimeout: () {
         throw TimeoutException('Ollama did not answer /api/tags within 15 s');
       });
 
@@ -484,7 +527,7 @@ class OllamaService extends ChatService {
 
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(baseUrl),
         body: json.encode({"model": name}),
       ).timeout(const Duration(seconds: 10), onTimeout: () {
         throw TimeoutException('Ollama did not answer /api/show within 10 s');
@@ -521,7 +564,7 @@ class OllamaService extends ChatService {
       final url = _build(base, "/api/create");
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(base),
         body: encoded,
       ).timeout(const Duration(seconds: 60), onTimeout: () {
         throw TimeoutException('Ollama did not answer /api/create within 60 s');
@@ -541,7 +584,7 @@ class OllamaService extends ChatService {
     await _withFailover((base) async {
       final url = _build(base, "/api/delete");
       final request = http.Request("DELETE", url);
-      request.headers.addAll(headers);
+      request.headers.addAll(headersFor(base));
       request.body = json.encode({"model": model});
       final streamed = await HorizonHttp.client.send(request).timeout(const Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Ollama did not answer /api/delete within 30 s');
@@ -568,7 +611,7 @@ class OllamaService extends ChatService {
   Future<List<OllamaRunningModel>> listRunningModels() async {
     return _withFailover((base) async {
       final url = _build(base, "/api/ps");
-      final response = await HorizonHttp.client.get(url, headers: headers).timeout(const Duration(seconds: 10), onTimeout: () {
+      final response = await HorizonHttp.client.get(url, headers: headersFor(base)).timeout(const Duration(seconds: 10), onTimeout: () {
         throw TimeoutException('Ollama did not answer /api/ps within 10 s');
       });
 
@@ -593,7 +636,7 @@ class OllamaService extends ChatService {
       final url = _build(base, "/api/generate");
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(base),
         body: json.encode({"model": model, "keep_alive": keepAlive, "stream": false}),
       ).timeout(const Duration(minutes: 10), onTimeout: () {
         throw TimeoutException('Loading $model took longer than 10 minutes — check the server with `ollama ps`.');
@@ -613,7 +656,7 @@ class OllamaService extends ChatService {
       final url = _build(base, "/api/generate");
       final response = await HorizonHttp.client.post(
         url,
-        headers: headers,
+        headers: headersFor(base),
         body: json.encode({"model": model, "keep_alive": 0, "stream": false}),
       ).timeout(const Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Ollama did not confirm the unload within 30 s');
@@ -632,7 +675,7 @@ class OllamaService extends ChatService {
     final response = await _withFailover((base) async {
       final url = _build(base, "/api/pull");
       final request = http.Request("POST", url);
-      request.headers.addAll(headers);
+      request.headers.addAll(headersFor(base));
       request.body = json.encode({"model": model, "stream": true});
       return HorizonHttp.client.send(request).timeout(const Duration(seconds: 60), onTimeout: () {
         throw TimeoutException('Ollama did not start the pull within 60 s');

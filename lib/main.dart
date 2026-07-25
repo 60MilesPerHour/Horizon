@@ -75,6 +75,8 @@ void main() async {
   String? openaiBaseUrl;
   String? geminiKey;
   String? ollamaToken;
+  String? cfAccessClientId;
+  String? cfAccessClientSecret;
   String? serpApiKey;
   try {
     const storage = FlutterSecureStorage();
@@ -83,6 +85,8 @@ void main() async {
     openaiBaseUrl = await storage.read(key: 'openai_base_url');
     geminiKey = await storage.read(key: 'google_api_key');
     ollamaToken = await storage.read(key: 'ollama_api_token');
+    cfAccessClientId = await storage.read(key: 'cf_access_client_id');
+    cfAccessClientSecret = await storage.read(key: 'cf_access_client_secret');
     serpApiKey = await storage.read(key: 'serpapi_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
@@ -106,7 +110,11 @@ void main() async {
   final openaiEnabled = settingsBox.get('enable_openai', defaultValue: false) as bool;
   final geminiEnabled = settingsBox.get('enable_google', defaultValue: false) as bool;
 
-  final ollamaService = OllamaService(apiToken: ollamaToken);
+  final ollamaService = OllamaService(
+    apiToken: ollamaToken,
+    cfAccessClientId: cfAccessClientId,
+    cfAccessClientSecret: cfAccessClientSecret,
+  );
   final claudeService = ClaudeService(apiKey: claudeKey, enabled: claudeEnabled);
   final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl, enabled: openaiEnabled);
   final geminiService = GeminiService(apiKey: geminiKey, enabled: geminiEnabled);

@@ -138,6 +138,12 @@ class ConfigBackupSettings extends StatelessWidget {
       if (p.containsKey('ollama_api_token')) {
         ollama.apiToken = p['ollama_api_token']!;
       }
+      if (p.containsKey('cf_access_client_id')) {
+        ollama.cfAccessClientId = p['cf_access_client_id']!;
+      }
+      if (p.containsKey('cf_access_client_secret')) {
+        ollama.cfAccessClientSecret = p['cf_access_client_secret']!;
+      }
 
       messenger.showSnackBar(
         SnackBar(

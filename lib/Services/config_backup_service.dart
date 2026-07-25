@@ -30,6 +30,8 @@ class ConfigBackupService {
     'openai_base_url',
     'google_api_key',
     'ollama_api_token',
+    'cf_access_client_id',
+    'cf_access_client_secret',
     'serpapi_api_key',
   ];
 

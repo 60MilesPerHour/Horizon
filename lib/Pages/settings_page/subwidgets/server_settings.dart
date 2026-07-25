@@ -142,7 +142,7 @@ class _ServerSettingsState extends State<ServerSettings> {
           },
           decoration: InputDecoration(
             labelText: 'Backup Server Address (optional)',
-            helperText: 'Tried when the primary is unreachable. Use this for a VPN/Tailscale address so home-LAN hosts stay private.',
+            helperText: 'Tried when the primary is unreachable. Use a Cloudflare tunnel hostname (https://…) or a VPN address so home-LAN hosts stay private.',
             helperMaxLines: 3,
             border: const OutlineInputBorder(),
             errorText: _backupAddressErrorText,
@@ -176,6 +176,8 @@ class _ServerSettingsState extends State<ServerSettings> {
         ),
         const SizedBox(height: 24),
         const _OllamaTokenField(),
+        const SizedBox(height: 24),
+        const _CloudflareAccessFields(),
         const SizedBox(height: 8),
         ListTile(
           contentPadding: EdgeInsets.zero,
@@ -220,7 +222,10 @@ class _ServerSettingsState extends State<ServerSettings> {
 
     try {
       final newAddress = _validateServerAddress(raw);
-      final result = await _establishServerConnection(Uri.parse(newAddress));
+      final result = await _establishServerConnection(
+        Uri.parse(newAddress),
+        headers: context.read<OllamaService>().headersFor(newAddress),
+      );
 
       if (!mounted) return;
 
@@ -269,8 +274,12 @@ class _ServerSettingsState extends State<ServerSettings> {
     try {
       // Validate the server address.
       final newAddress = _validateServerAddress(_serverAddressController.text);
-      // Establish a connection to the server.
-      final result = await _establishServerConnection(Uri.parse(newAddress));
+      // Establish a connection to the server. Access headers ride along in
+      // case the user points the *primary* at the tunnel hostname too.
+      final result = await _establishServerConnection(
+        Uri.parse(newAddress),
+        headers: context.read<OllamaService>().headersFor(newAddress),
+      );
 
       if (!mounted) return;
 
@@ -302,13 +311,18 @@ class _ServerSettingsState extends State<ServerSettings> {
   ///
   /// Returns a tuple of the request state and the given server address.
   static Future<(OllamaRequestState, Uri)> _establishServerConnection(
-    Uri serverAddress,
-  ) async {
+    Uri serverAddress, {
+    Map<String, String>? headers,
+  }) async {
     try {
       // 4 s: generous enough for a high-latency VPN hop (ZeroTier relayed
       // path), still fast enough for the local-network scan to finish quickly.
-      final response =
-          await http.get(serverAddress).timeout(const Duration(seconds: 4));
+      // [headers] carries the Cloudflare Access service token when the address
+      // is a tunnel hostname — without it Access answers 302/403 and the probe
+      // would report the server as down even though it's fine.
+      final response = await http
+          .get(serverAddress, headers: headers)
+          .timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         return (OllamaRequestState.success, serverAddress);
@@ -489,6 +503,139 @@ class _OllamaInfoBottomSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Cloudflare Access service-token credentials, used when the backup address
+/// is a tunnel hostname sitting behind an Access application. Both halves are
+/// saved together — a half-configured token is worse than none, because the
+/// request looks authenticated and still gets a 403.
+class _CloudflareAccessFields extends StatefulWidget {
+  const _CloudflareAccessFields();
+
+  @override
+  State<_CloudflareAccessFields> createState() =>
+      _CloudflareAccessFieldsState();
+}
+
+class _CloudflareAccessFieldsState extends State<_CloudflareAccessFields> {
+  static const _storage = FlutterSecureStorage();
+
+  final _idController = TextEditingController();
+  final _secretController = TextEditingController();
+  bool _obscure = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      _idController.text = await _storage.read(key: 'cf_access_client_id') ?? '';
+      _secretController.text =
+          await _storage.read(key: 'cf_access_client_secret') ?? '';
+    } catch (_) {
+      // ignore — keystore may be unavailable on Linux without a keyring
+    } finally {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final id = _idController.text.trim();
+    final secret = _secretController.text.trim();
+    final service = context.read<OllamaService>();
+
+    Future<void> put(String key, String value) async {
+      try {
+        if (value.isEmpty) {
+          await _storage.delete(key: key);
+        } else {
+          await _storage.write(key: key, value: value);
+        }
+      } catch (_) {}
+    }
+
+    await put('cf_access_client_id', id);
+    await put('cf_access_client_secret', secret);
+    service.cfAccessClientId = id;
+    service.cfAccessClientSecret = secret;
+
+    if (!mounted) return;
+    final String message;
+    if (id.isEmpty && secret.isEmpty) {
+      message = 'Access service token cleared';
+    } else if (id.isEmpty || secret.isEmpty) {
+      message = 'Both Client ID and Client Secret are required';
+    } else {
+      message = 'Access service token saved';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _secretController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cloudflare Access (optional)',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _idController,
+          enabled: _loaded,
+          keyboardType: TextInputType.text,
+          decoration: const InputDecoration(
+            labelText: 'Access Client ID',
+            helperText:
+                'Service-token credentials for a backup address behind a Cloudflare tunnel. Sent only to https:// endpoints.',
+            helperMaxLines: 3,
+            hintText: '....access',
+            border: OutlineInputBorder(),
+          ),
+          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _secretController,
+          enabled: _loaded,
+          obscureText: _obscure,
+          decoration: InputDecoration(
+            labelText: 'Access Client Secret',
+            border: const OutlineInputBorder(),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.save),
+                  onPressed: _save,
+                ),
+              ],
+            ),
+          ),
+          onSubmitted: (_) => _save(),
+          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+        ),
+      ],
     );
   }
 }
