@@ -324,6 +324,14 @@ class _ServerSettingsState extends State<ServerSettings> {
           .get(serverAddress, headers: headers)
           .timeout(const Duration(seconds: 4));
 
+      // A Cloudflare Access login page is a 200 with an HTML body (the client
+      // followed Access's 302), so status alone would light the dot green on a
+      // server we can't actually talk to. Ollama's root answers plain text.
+      if (response.statusCode == 200 &&
+          response.body.trimLeft().startsWith('<')) {
+        return (OllamaRequestState.error, serverAddress);
+      }
+
       if (response.statusCode == 200) {
         return (OllamaRequestState.success, serverAddress);
       } else {

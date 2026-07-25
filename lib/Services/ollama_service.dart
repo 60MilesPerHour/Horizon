@@ -132,6 +132,36 @@ class OllamaService extends ChatService {
   bool get hasCfAccessToken =>
       _cfAccessClientId.isNotEmpty && _cfAccessClientSecret.isNotEmpty;
 
+  /// Cloudflare Access answers an unauthenticated request with a 302 to its
+  /// login page; the HTTP client follows it and we get **200 OK with an HTML
+  /// login form**. Decoding that as JSON produces a useless
+  /// "FormatException: Unexpected character (at character 1) <!DOCTYPE html".
+  /// Detect it before decoding and say what actually went wrong.
+  ///
+  /// Throws if [body] is an HTML page instead of an API response.
+  void _rejectIfAccessLoginPage(String body, String base) {
+    final head = body.trimLeft();
+    if (!head.startsWith('<')) return;
+    final lower = head.toLowerCase();
+    if (lower.contains('cloudflareaccess.com') ||
+        lower.contains('cf-access') ||
+        lower.contains('cdn-cgi/access')) {
+      throw OllamaException(
+        hasCfAccessToken
+            ? 'Cloudflare Access rejected the service token for $base. '
+                'Check that the Client ID ends in ".access", the secret matches, '
+                'and the Access policy Action is "Service Auth".'
+            : 'Cloudflare Access is protecting $base but no service token is '
+                'configured. Add one in Settings → Server → Cloudflare Access.',
+      );
+    }
+    throw OllamaException(
+      'Got an HTML page instead of an API response from $base — '
+      'something between the app and Ollama (proxy, captive portal, or '
+      'tunnel) answered instead of the server.',
+    );
+  }
+
   /// Headers for a request aimed at [base]. Built per-request so both the
   /// bearer token and the Access credentials reflect the current settings,
   /// and so the Access headers only ride along on the endpoints that need
@@ -291,6 +321,7 @@ class OllamaService extends ChatService {
       });
 
       if (response.statusCode == 200) {
+        _rejectIfAccessLoginPage(response.body, base);
         try {
           final jsonBody = json.decode(response.body);
           return OllamaMessage.fromJson(jsonBody);
@@ -374,6 +405,7 @@ class OllamaService extends ChatService {
       });
 
       if (response.statusCode == 200) {
+        _rejectIfAccessLoginPage(response.body, base);
         try {
           final jsonBody = json.decode(response.body);
           return OllamaMessage.fromJson(jsonBody);
@@ -501,6 +533,7 @@ class OllamaService extends ChatService {
       });
 
       if (response.statusCode == 200) {
+        _rejectIfAccessLoginPage(response.body, base);
         try {
           final jsonBody = json.decode(response.body);
           return ApiTagsResponse.fromJson(jsonBody);
@@ -534,6 +567,7 @@ class OllamaService extends ChatService {
       });
 
       if (response.statusCode == 200) {
+        _rejectIfAccessLoginPage(response.body, baseUrl);
         try {
           final jsonBody = json.decode(response.body);
           return ApiShowResponse.fromJson(jsonBody);
