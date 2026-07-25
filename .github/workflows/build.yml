@@ -57,7 +57,10 @@ jobs:
       - name: Verify APK is release-signed
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
-          SIGNER=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -m1 'Subject:')
+          # Multiple build-tools versions are installed — pick one, don't let
+          # the glob turn the rest into arguments.
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          SIGNER=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 'Subject:')
           echo "$SIGNER"
           case "$SIGNER" in
             *"CN=Android Debug"*)
