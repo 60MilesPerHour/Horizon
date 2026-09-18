@@ -10,6 +10,7 @@ import 'package:horizon/Services/voice/stt/elevenlabs_transcriber.dart';
 import 'package:horizon/Services/voice/stt/speech_input_backend.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
+import 'package:horizon/Pages/settings_page/subwidgets/speech_server_fields.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
 const _storage = FlutterSecureStorage();
@@ -270,28 +271,21 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Any server speaking the OpenAI transcription API: '
-          'faster-whisper-server, Speaches, whisper.cpp, LocalAI — or point it '
-          'at OpenAI or Groq with a key. Audio is sent as 16 kHz mono WAV, '
-          'which every one of them accepts without ffmpeg.',
+          'Any server speaking the OpenAI transcription API: Speaches, '
+          'faster-whisper-server, whisper.cpp, LocalAI. Tap the scan icon to '
+          'find one on this network rather than typing an address.',
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
-        _PersistedField(
-          label: 'Server address',
-          hint: 'http://172.16.23.20:8000',
-          initialValue: _settings.get('whisper_base_url') as String? ?? '',
-          onChanged: (value) {
+        SpeechServerFields(
+          task: 'automatic-speech-recognition',
+          initialBaseUrl: _settings.get('whisper_base_url') as String? ?? '',
+          initialModel: _settings.get('whisper_model') as String? ?? '',
+          onBaseUrlChanged: (value) {
             _whisper.baseUrl = value;
             _settings.put('whisper_base_url', value);
           },
-        ),
-        const SizedBox(height: 8),
-        _PersistedField(
-          label: 'Model',
-          hint: 'Systran/faster-distil-whisper-large-v3',
-          initialValue: _settings.get('whisper_model') as String? ?? 'whisper-1',
-          onChanged: (value) {
+          onModelChanged: (value) {
             _whisper.model = value;
             _settings.put('whisper_model', value);
           },
@@ -432,73 +426,44 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
   Widget _selfHostedTtsFields() {
     final theme = Theme.of(context);
-    // Speaches serves transcription and speech from one container, so the
-    // address is almost always the one already entered above — offer it
-    // rather than making it be typed twice.
-    final whisperUrl = (_settings.get('whisper_base_url') as String? ?? '').trim();
-    final currentUrl = _synthesis.selfHostedBaseUrl.trim();
+    // Speaches serves transcription and speech from one container, so default
+    // to the address already entered above rather than making it be typed
+    // twice.
+    final whisperUrl =
+        (_settings.get('whisper_base_url') as String? ?? '').trim();
+    final current = _synthesis.selfHostedBaseUrl.trim();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _PersistedField(
-          label: 'Server address',
-          hint: 'http://172.16.23.20:8000',
-          initialValue: currentUrl.isEmpty ? whisperUrl : currentUrl,
-          onChanged: (value) {
-            _synthesis.selfHostedBaseUrl = value;
-            _settings.put('tts_base_url', value);
-          },
-        ),
-        if (currentUrl.isEmpty && whisperUrl.isNotEmpty)
+        if (current.isEmpty && whisperUrl.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 4.0),
+            padding: const EdgeInsets.only(bottom: 8.0),
             child: Text(
-              'Prefilled from your Whisper server — Speaches serves both from '
-              'the same address.',
+              'Prefilled from your transcription server — Speaches serves '
+              'both from one address.',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
-        const SizedBox(height: 8),
-        _PersistedField(
-          label: 'Model',
-          hint: SpeechSynthesisService.defaultSelfHostedModel,
-          initialValue: _settings.get('tts_model') as String? ??
-              SpeechSynthesisService.defaultSelfHostedModel,
-          onChanged: (value) {
+        SpeechServerFields(
+          task: 'text-to-speech',
+          initialBaseUrl: current.isEmpty ? whisperUrl : current,
+          initialModel: _synthesis.selfHostedModel,
+          initialVoice: _synthesis.selfHostedVoice,
+          showVoicePicker: true,
+          onBaseUrlChanged: (value) {
+            _synthesis.selfHostedBaseUrl = value;
+            _settings.put('tts_base_url', value);
+          },
+          onModelChanged: (value) {
             _synthesis.selfHostedModel = value;
             _settings.put('tts_model', value);
           },
-        ),
-        const SizedBox(height: 8),
-        _PersistedField(
-          label: 'Voice',
-          hint: SpeechSynthesisService.defaultSelfHostedVoice,
-          initialValue: _settings.get('tts_voice') as String? ??
-              SpeechSynthesisService.defaultSelfHostedVoice,
-          onChanged: (value) {
+          onVoiceChanged: (value) {
             _synthesis.selfHostedVoice = value;
             _settings.put('tts_voice', value);
           },
-        ),
-        const SizedBox(height: 8),
-        // Free text with suggestions, not a dropdown: Speaches has no
-        // voice-listing endpoint yet, so any fixed list would be a guess
-        // about what's actually installed on the server.
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: SpeechSynthesisService.kokoroVoiceSuggestions
-              .map((voice) => ActionChip(
-                    label: Text(voice),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () async {
-                      setState(() => _synthesis.selfHostedVoice = voice);
-                      await _settings.put('tts_voice', voice);
-                    },
-                  ))
-              .toList(),
         ),
         const SizedBox(height: 8),
         _PersistedField(
