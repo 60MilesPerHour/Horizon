@@ -13,6 +13,7 @@ import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/api/create_request.dart';
+import 'package:horizon/Models/chat_tool.dart';
 import 'package:horizon/Services/chat_service.dart';
 
 class OllamaService extends ChatService {
@@ -425,6 +426,7 @@ class OllamaService extends ChatService {
   Stream<OllamaMessage> chatStream(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
+    List<ToolDefinition> tools = const [],
   }) async* {
     final encoded = await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt);
     final response = await _withFailover((base) async {
@@ -436,6 +438,8 @@ class OllamaService extends ChatService {
         "messages": encoded,
         "options": chat.options.toMap(),
         if (chat.options.think != null) "think": chat.options.think,
+        if (tools.isNotEmpty)
+          "tools": tools.map((t) => t.toOpenAiJson()).toList(),
         "stream": true,
       });
       return HorizonHttp.client.send(request).timeout(_chatHeadersTimeout, onTimeout: () {

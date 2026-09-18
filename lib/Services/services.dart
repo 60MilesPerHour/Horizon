@@ -1,3 +1,4 @@
+export 'attachment_service.dart';
 export 'chat_export_service.dart';
 export 'config_backup_service.dart';
 export 'chat_service.dart';
@@ -7,7 +8,10 @@ export 'database_service.dart';
 export 'gemini_service.dart';
 export 'ollama_health_monitor.dart';
 export 'ollama_service.dart';
+export 'openai_compatible_service.dart';
 export 'openai_service.dart';
+export 'openrouter_service.dart';
 export 'permission_service.dart';
 export 'image_service.dart';
+export 'tool_service.dart';
 export 'web_search_service.dart';

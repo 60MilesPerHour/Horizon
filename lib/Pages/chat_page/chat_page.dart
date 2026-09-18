@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
+import 'package:horizon/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_attachment.dart';
 import 'package:horizon/Widgets/chat_app_bar.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
@@ -54,9 +55,24 @@ class _ChatPageState extends State<ChatPage> {
             key: ValueKey(_viewModel.currentChat?.id),
             controller: _viewModel.textFieldController,
             onEditingComplete: _sendMessage,
-            prefixIcon: IconButton(
-              icon: Icon(Icons.add),
-              onPressed: _handleAttachmentButton,
+            prefixIcon: MenuAnchor(
+              menuChildren: [
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.image_outlined),
+                  onPressed: _pickImages,
+                  child: const Text('Photo'),
+                ),
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.attach_file),
+                  onPressed: _pickDocuments,
+                  child: const Text('Document'),
+                ),
+              ],
+              builder: (context, controller, _) => IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: () =>
+                    controller.isOpen ? controller.close() : controller.open(),
+              ),
             ),
             suffixIcon: _buildTextFieldSuffixIcon(),
           ),
@@ -95,7 +111,7 @@ class _ChatPageState extends State<ChatPage> {
         key: PageStorageKey<String>(_viewModel.currentChat?.id ?? 'empty'),
         messages: _viewModel.messages,
         isAwaitingReply: _viewModel.isThinking,
-        statusLabel: _viewModel.isSearching ? 'Searching the web…' : 'Generating',
+        statusLabel: _viewModel.activityLabel ?? 'Generating',
         streamingContent: _viewModel.isStreaming ? _viewModel.streamingContent : null,
         error: _viewModel.currentError != null
             ? ChatError(
@@ -103,7 +119,7 @@ class _ChatPageState extends State<ChatPage> {
                 onRetry: () => _viewModel.retryLastPrompt(),
               )
             : null,
-        bottomPadding: _viewModel.hasImageAttachments
+        bottomPadding: _viewModel.hasStagedFiles
             ? MediaQuery.of(context).size.height * 0.15
             : null, // TODO: Calculate the height of attachments row
       );
@@ -111,13 +127,28 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildChatFooter() {
-    if (_viewModel.hasImageAttachments) {
+    if (_viewModel.hasStagedFiles) {
+      // Images and documents share one row so attaching both doesn't stack
+      // two scrollers over the prompt field. Images come first because their
+      // thumbnails are the taller item and set the row height.
+      final images = _viewModel.imageFiles;
+      final documents = _viewModel.attachments;
       return ChatAttachmentRow(
-        itemCount: _viewModel.imageFiles.length,
+        itemCount: images.length + documents.length,
         itemBuilder: (context, index) {
-          return ChatAttachmentImage(
-            imageFile: _viewModel.imageFiles[index],
-            onRemove: (imageFile) => _viewModel.removeImage(imageFile),
+          if (index < images.length) {
+            return ChatAttachmentImage(
+              imageFile: images[index],
+              onRemove: (imageFile) => _viewModel.removeImage(imageFile),
+            );
+          }
+          final attachment = documents[index - images.length];
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: AttachmentChip(
+              attachment: attachment,
+              onRemove: () => _viewModel.removeAttachment(attachment),
+            ),
           );
         },
       );
@@ -147,7 +178,7 @@ class _ChatPageState extends State<ChatPage> {
         color: Theme.of(context).colorScheme.onSurface,
         onPressed: _viewModel.cancelStreaming,
       );
-    } else if (_viewModel.hasText) {
+    } else if (_viewModel.hasText || _viewModel.hasStagedFiles) {
       return IconButton(
         icon: const Icon(Icons.arrow_upward_rounded),
         color: Theme.of(context).colorScheme.onSurface,
@@ -177,9 +208,20 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _handleAttachmentButton() async {
+  Future<void> _pickImages() async {
     await _viewModel.pickImages(
       onPermissionDenied: _showPhotosDeniedAlert,
+    );
+  }
+
+  Future<void> _pickDocuments() async {
+    await _viewModel.pickAttachments(onError: _showAttachmentError);
+  }
+
+  void _showAttachmentError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 

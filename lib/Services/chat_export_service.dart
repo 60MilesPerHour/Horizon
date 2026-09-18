@@ -265,6 +265,8 @@ class ChatExportService {
         return 'Assistant';
       case OllamaMessageRole.system:
         return 'System';
+      case OllamaMessageRole.tool:
+        return 'Tool';
     }
   }
 
@@ -274,6 +276,8 @@ class ChatExportService {
         return OllamaMessageRole.assistant;
       case 'system':
         return OllamaMessageRole.system;
+      case 'tool':
+        return OllamaMessageRole.tool;
       default:
         return OllamaMessageRole.user;
     }

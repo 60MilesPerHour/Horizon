@@ -6,7 +6,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:notification_centre/notification_centre.dart';
 
 import 'package:horizon/Constants/constants.dart';
+import 'package:horizon/Models/attachment.dart';
 import 'package:horizon/Models/chat_configure_arguments.dart';
+import 'package:horizon/Models/chat_tool.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
@@ -15,6 +17,7 @@ import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
 import 'package:horizon/Services/generation_keepalive.dart';
+import 'package:horizon/Services/tool_service.dart';
 import 'package:horizon/Services/web_search_service.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 
@@ -22,6 +25,13 @@ class ChatProvider extends ChangeNotifier {
   final ChatServiceRegistry _registry;
   final DatabaseService _databaseService;
   final WebSearchService _webSearch;
+  final ToolService _toolService;
+
+  /// Cap on tool round-trips within a single user turn. A model that keeps
+  /// searching instead of answering would otherwise loop until the user's
+  /// patience or their SerpAPI quota runs out; when the cap is hit the model
+  /// is told to answer with what it has.
+  static const int maxToolIterations = 6;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -42,12 +52,16 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, OllamaMessage?> _activeChatStreams = {};
   final Map<String, StreamSubscription?> _streamSubscriptions = {};
 
-  /// Chats currently in the web-search fetch phase. Drives the "Searching…"
-  /// indicator, distinct from the normal "Generating" thinking state.
-  final Set<String> _searchingChats = {};
+  /// Chats currently running a tool or fetching search results, mapped to the
+  /// label to show ("Searching for …"). Drives the activity line under the
+  /// awaiting-reply indicator, distinct from plain "Generating".
+  final Map<String, String> _toolActivity = {};
 
   bool get isCurrentChatSearching =>
-      currentChat != null && _searchingChats.contains(currentChat?.id);
+      currentChat != null && _toolActivity.containsKey(currentChat?.id);
+
+  /// Label for whatever the current chat is doing out-of-band, or null.
+  String? get currentChatActivity => _toolActivity[currentChat?.id];
 
   bool get isCurrentChatStreaming =>
       _activeChatStreams.containsKey(currentChat?.id);
@@ -85,9 +99,11 @@ class ChatProvider extends ChangeNotifier {
     required ChatServiceRegistry registry,
     required DatabaseService databaseService,
     required WebSearchService webSearch,
+    required ToolService toolService,
   })  : _registry = registry,
         _databaseService = databaseService,
-        _webSearch = webSearch {
+        _webSearch = webSearch,
+        _toolService = toolService {
     _initialize();
   }
 
@@ -164,12 +180,14 @@ class ChatProvider extends ChangeNotifier {
     OllamaModel model,
     String text, {
     List<File>? images,
+    List<Attachment>? attachments,
   }) async {
     final chat = await _createNewChatInternal(model, firstPrompt: null);
 
     final prompt = OllamaMessage(
       text.trim(),
       images: images,
+      attachments: attachments,
       role: OllamaMessageRole.user,
     );
     _messages = [prompt];
@@ -282,7 +300,11 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.deleteChat(chat.id);
   }
 
-  Future<void> sendPrompt(String text, {List<File>? images}) async {
+  Future<void> sendPrompt(
+    String text, {
+    List<File>? images,
+    List<Attachment>? attachments,
+  }) async {
     // Save the chat where the prompt was sent
     final associatedChat = currentChat!;
 
@@ -290,6 +312,7 @@ class ChatProvider extends ChangeNotifier {
     final prompt = OllamaMessage(
       text.trim(),
       images: images,
+      attachments: attachments,
       role: OllamaMessageRole.user,
     );
     _messages.add(prompt);
@@ -339,12 +362,7 @@ class ChatProvider extends ChangeNotifier {
     await GenerationKeepalive.acquire();
 
     try {
-      // Build the outgoing message list and effective system prompt. When web
-      // search is on, this runs a decision pass and (only if the model asks)
-      // a search, surfacing the "Searching…" state — see _prepareSend.
-      final (outgoing, effectiveChat) = await _prepareSend(associatedChat);
-      ollamaMessage =
-          await _streamOllamaMessage(associatedChat, outgoing, effectiveChat);
+      await _runTurn(associatedChat);
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
       ollamaMessage = _salvagePartial(associatedChat);
@@ -357,15 +375,115 @@ class ChatProvider extends ChangeNotifier {
     } finally {
       // Remove the chat from the active chat streams
       _activeChatStreams.remove(associatedChat.id);
-      _searchingChats.remove(associatedChat.id);
+      _toolActivity.remove(associatedChat.id);
       await GenerationKeepalive.release();
       notifyListeners();
     }
 
-    // Save the Ollama message to the database
+    // Only the salvage path lands here: _runTurn persists each message as it
+    // completes, because a tool round-trip can produce several per turn.
     if (ollamaMessage != null) {
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
     }
+  }
+
+  /// Runs one user turn to completion, including any tool round-trips.
+  ///
+  /// The model streams a reply; if that reply asks for tools, they're executed,
+  /// their results are appended to the transcript as `tool` messages, and the
+  /// model is called again with them — repeating until it answers in prose or
+  /// [maxToolIterations] is hit. Every message is persisted as it completes so
+  /// a crash or a dropped connection mid-loop leaves the transcript coherent
+  /// rather than losing the tool work.
+  Future<void> _runTurn(OllamaChat associatedChat) async {
+    final (outgoing, effectiveChat, tools) = await _prepareSend(associatedChat);
+    // Copied, not aliased: _prepareSend usually hands back `_messages` itself,
+    // and both _streamOllamaMessage and the tool loop below append to
+    // `_messages` for display. Spreading a live alias would then send the
+    // assistant turn and every tool result to the provider twice.
+    var conversation = List<OllamaMessage>.from(outgoing);
+    var activeTools = tools;
+
+    for (var iteration = 0;; iteration++) {
+      // Past the cap the tools simply stop being offered, so the model's only
+      // option is to answer with what the previous rounds returned. No notice
+      // or forced extra pass needed — it can't call what isn't declared.
+      final offeredTools =
+          iteration < maxToolIterations ? activeTools : const <ToolDefinition>[];
+
+      OllamaMessage? assistant;
+      try {
+        assistant = await _streamOllamaMessage(
+          associatedChat,
+          conversation,
+          effectiveChat,
+          tools: offeredTools,
+        );
+      } on OllamaException catch (error) {
+        // A model that doesn't do tools usually says so with a 400 rather than
+        // a capability flag. Remember it, drop the tools, and re-run the same
+        // turn so the user gets an answer instead of an error they can't act
+        // on. Only ever retried once per turn, since activeTools is empty
+        // afterwards and the guard below can't fire again.
+        if (activeTools.isNotEmpty && _looksLikeToolsUnsupported(error)) {
+          _toolSupport['${effectiveChat.provider}:${effectiveChat.model}'] = false;
+          activeTools = const [];
+          iteration--;
+          continue;
+        }
+        rethrow;
+      }
+
+      if (assistant == null) return; // cancelled, or nothing was produced
+
+      await _databaseService.addMessage(assistant, chat: associatedChat);
+      if (!assistant.hasToolCalls) return;
+
+      // A model can emit a tool call even when none were declared (small ones
+      // hallucinate the syntax). Running it would loop forever, so stop here
+      // and leave its reply as the final word.
+      if (offeredTools.isEmpty) return;
+
+      final results = <OllamaMessage>[];
+      for (final call in assistant.toolCalls!) {
+        // The user can cancel mid-tool; stop before spending another request.
+        if (!_activeChatStreams.containsKey(associatedChat.id)) return;
+
+        // Say what's happening while it happens — a silent 20-second page
+        // fetch is indistinguishable from a hung connection.
+        _toolActivity[associatedChat.id] = _toolService.labelFor(call);
+        notifyListeners();
+
+        final result = await _toolService.execute(call);
+        final message = OllamaMessage.toolResult(call: call, result: result);
+        results.add(message);
+        await _databaseService.addMessage(message, chat: associatedChat);
+        if (associatedChat.id == currentChat?.id) _messages.add(message);
+        notifyListeners();
+      }
+
+      _toolActivity.remove(associatedChat.id);
+      // Re-arm the awaiting-reply indicator for the next model pass and clear
+      // the streaming buffer so the next bubble doesn't open on stale text.
+      _activeChatStreams[associatedChat.id] = null;
+      streamingContent.value = '';
+      notifyListeners();
+
+      conversation = [...conversation, assistant, ...results];
+    }
+  }
+
+  /// Whether [error] is a provider complaining that the model can't use tools,
+  /// as opposed to any other 400. Matched on text because none of the four
+  /// providers expose a machine-readable code for it.
+  static bool _looksLikeToolsUnsupported(OllamaException error) {
+    final message = error.toString().toLowerCase();
+    if (!message.contains('tool')) return false;
+    return message.contains('does not support') ||
+        message.contains('not supported') ||
+        message.contains('unsupported') ||
+        message.contains('no tool support') ||
+        message.contains('does not support tools');
   }
 
   /// If a stream died mid-response, rescue whatever text already arrived so
@@ -381,15 +499,26 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(
     OllamaChat associatedChat,
     List<OllamaMessage> outgoing,
-    OllamaChat effectiveChat,
-  ) async {
+    OllamaChat effectiveChat, {
+    List<ToolDefinition> tools = const [],
+  }) async {
     if (_messages.isEmpty) return null;
 
     final service = _registry.forChat(effectiveChat);
-    final stream = service.chatStream(outgoing, chat: effectiveChat);
+    final stream = service.chatStream(
+      outgoing,
+      chat: effectiveChat,
+      tools: tools,
+    );
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
+
+    // Tool calls can arrive on any chunk (Ollama attaches them to the final
+    // one, Gemini mid-stream, OpenAI/Anthropic reassembled at the end), and a
+    // tool-calling turn often carries no text at all — so they're collected
+    // separately from the typewriter path and attached once the stream ends.
+    final collectedToolCalls = <ToolCall>[];
 
     // Typewriter buffer: incoming tokens go into [pending]; a 32 ms timer
     // drains characters into the displayed message at a steady pace.
@@ -414,10 +543,10 @@ class ChatProvider extends ChangeNotifier {
         // of 48 left a backlog that then snapped onto screen all at once at
         // stream end. 160 drains a 4K burst in ~1s while still animating.
         final n = (s.length ~/ 4).clamp(2, 160);
-        streamingMessage!.content += s.substring(0, n);
+        streamingMessage.content += s.substring(0, n);
         if (n < s.length) pending.write(s.substring(n));
         // Update only the ValueNotifier — avoids a full-page rebuild.
-        streamingContent.value = streamingMessage!.content;
+        streamingContent.value = streamingMessage.content;
       });
     }
 
@@ -425,9 +554,9 @@ class ChatProvider extends ChangeNotifier {
       typewriter?.cancel();
       typewriter = null;
       if (pending.isNotEmpty && streamingMessage != null) {
-        streamingMessage!.content += pending.toString();
+        streamingMessage.content += pending.toString();
         pending.clear();
-        streamingContent.value = streamingMessage!.content;
+        streamingContent.value = streamingMessage.content;
       }
     }
 
@@ -457,6 +586,10 @@ class ChatProvider extends ChangeNotifier {
           cancelled = true;
           streamingMessage?.createdAt = DateTime.now();
           return streamingMessage;
+        }
+
+        if (receivedMessage.hasToolCalls) {
+          collectedToolCalls.addAll(receivedMessage.toolCalls!);
         }
 
         if (receivedMessage.content.isEmpty && streamingMessage == null) {
@@ -505,39 +638,95 @@ class ChatProvider extends ChangeNotifier {
       streamingMessage?.updateMetadataFrom(receivedMessage);
     }
 
+    // A turn that only called tools produced no text, so no bubble was ever
+    // opened. Mint the assistant message now that we know what it is — the
+    // transcript needs it to replay the call back to the provider, and the
+    // bubble renders it as a tool card rather than an empty message.
+    if (streamingMessage == null && collectedToolCalls.isNotEmpty) {
+      streamingMessage = OllamaMessage(
+        '',
+        role: OllamaMessageRole.assistant,
+        model: receivedMessage?.model ?? effectiveChat.model,
+        toolCalls: collectedToolCalls,
+      );
+      if (associatedChat.id == currentChat?.id) {
+        _messages.add(streamingMessage);
+      }
+    } else if (streamingMessage != null && collectedToolCalls.isNotEmpty) {
+      streamingMessage.toolCalls = collectedToolCalls;
+    }
+
     streamingMessage?.createdAt = DateTime.now();
     notifyListeners();
 
     return streamingMessage;
   }
 
-  /// Prepares the actual send: returns the message list to stream and the chat
-  /// (with any system-prompt addons) to send it under.
+  /// Per-model tool support, keyed `provider:model`. Populated from the model
+  /// list (Ollama's /api/show and OpenRouter's model metadata both report it)
+  /// and corrected by [_looksLikeToolsUnsupported] when a provider rejects a
+  /// tool-bearing request.
+  final Map<String, bool> _toolSupport = {};
+
+  /// Records what the freshly-listed models say about tool support.
+  void _rememberToolSupport(List<OllamaModel> models) {
+    for (final model in models) {
+      final capabilities = model.capabilities;
+      if (capabilities == null) continue;
+      _toolSupport['${model.provider}:${model.name}'] = capabilities.tools;
+    }
+  }
+
+  /// Whether to declare tools for [chat].
   ///
-  /// Web search, when enabled, runs a two-step client-side loop:
-  ///   1. A cheap *decision pass* asks the model whether the latest message
-  ///      needs fresh external info. The model replies with a `<search>` query
-  ///      or `<nosearch>` — so we don't search every message.
-  ///   2. Only if it asked, we fetch results (surfacing "Searching…") and
-  ///      append them to the latest user turn for the answer pass.
-  /// The web-search and artifacts system-prompt addons are appended to the
-  /// chat's own system prompt regardless of what that prompt says.
-  Future<(List<OllamaMessage>, OllamaChat)> _prepareSend(
+  /// Prefers what the model list reported. With nothing cached — a chat
+  /// reopened before any model fetch — cloud providers are assumed capable
+  /// (every current hosted chat model is) while Ollama is not, because sending
+  /// tools to a local model that lacks them is an outright 400 rather than a
+  /// degraded answer. Either guess self-corrects on first use.
+  bool _modelSupportsTools(OllamaChat chat) {
+    final cached = _toolSupport['${chat.provider}:${chat.model}'];
+    if (cached != null) return cached;
+    return chat.provider != 'ollama';
+  }
+
+  /// Prepares the actual send: the message list to stream, the chat (with any
+  /// system-prompt addons) to send it under, and the tools to declare.
+  ///
+  /// Two mechanisms, picked automatically:
+  ///   * **Native tools** when the model supports them — the tools are
+  ///     declared in the provider's own protocol and the model calls what it
+  ///     needs, as many times as it needs.
+  ///   * **The legacy convention pass** otherwise, and only when a search
+  ///     backend is configured: a cheap decision call asks the model to reply
+  ///     `<search>query</search>` or `<nosearch>`, and results are injected as
+  ///     plain text. Weaker — it can only search, once, and depends on the
+  ///     model obeying prose — but it works on models with no tool support.
+  Future<(List<OllamaMessage>, OllamaChat, List<ToolDefinition>)> _prepareSend(
     OllamaChat chat,
   ) async {
     var outgoing = _messages;
     var systemAddon = '';
+    var tools = const <ToolDefinition>[];
 
-    if (chat.options.webSearch && _webSearch.isConfigured) {
-      systemAddon += WebSearchConstants.systemPromptAddon;
-      String? context;
-      try {
-        context = await _runWebSearchPrePass(chat);
-      } catch (_) {
-        context = null; // best-effort; fall back to a normal send
-      }
-      if (context != null) {
-        outgoing = _appendToLastUser(_messages, context);
+    if (chat.options.tools) {
+      final service = _registry.forChat(chat);
+      final native = service.supportsTools && _modelSupportsTools(chat);
+
+      if (native) {
+        tools = _toolService.availableTools();
+        if (tools.isNotEmpty) systemAddon += ToolConstants.systemPromptAddon;
+      } else if (_webSearch.isConfigured) {
+        systemAddon += WebSearchConstants.systemPromptAddon;
+        String? context;
+        try {
+          context = await _runWebSearchPrePass(chat);
+        } catch (_) {
+          context = null; // best-effort; fall back to a normal send
+        }
+        if (context != null) {
+          outgoing = _appendToLastUser(_messages, context);
+        }
       }
     }
 
@@ -547,7 +736,7 @@ class ChatProvider extends ChangeNotifier {
 
     final effectiveChat =
         systemAddon.isEmpty ? chat : _withSystemAddon(chat, systemAddon);
-    return (outgoing, effectiveChat);
+    return (outgoing, effectiveChat, tools);
   }
 
   /// Runs the decision pass and, if the model asks for a search, fetches and
@@ -585,12 +774,12 @@ class ChatProvider extends ChangeNotifier {
     // Bail if the user cancelled while the decision pass ran.
     if (!_activeChatStreams.containsKey(chat.id)) return null;
 
-    _searchingChats.add(chat.id);
+    _toolActivity[chat.id] = 'Searching for "$query"…';
     notifyListeners();
     try {
       return await _webSearch.buildContext(query);
     } finally {
-      _searchingChats.remove(chat.id);
+      _toolActivity.remove(chat.id);
       notifyListeners();
     }
   }
@@ -638,6 +827,9 @@ class ChatProvider extends ChangeNotifier {
       id: userMessage.id,
       role: userMessage.role,
       images: userMessage.images,
+      // Carried over or the attached documents silently vanish from the one
+      // send that needed them most.
+      attachments: userMessage.attachments,
       createdAt: userMessage.createdAt,
     );
     return copy;
@@ -684,9 +876,17 @@ class ChatProvider extends ChangeNotifier {
 
     final associatedChat = currentChat!;
 
-    if (_messages.last.role == OllamaMessageRole.assistant) {
-      final message = _messages.removeLast();
-      await _databaseService.deleteMessage(message.id);
+    // Drop everything back to the last user turn. A failed turn can leave
+    // several messages behind — a tool-call assistant turn plus one message
+    // per tool result — and replaying with those still attached makes the
+    // model answer the stale tool output instead of retrying the prompt.
+    final discarded = <OllamaMessage>[];
+    while (_messages.isNotEmpty &&
+        _messages.last.role != OllamaMessageRole.user) {
+      discarded.add(_messages.removeLast());
+    }
+    if (discarded.isNotEmpty) {
+      await _databaseService.deleteMessages(discarded);
     }
 
     // Reinitialize the chat stream with the messages in the chat
@@ -728,7 +928,9 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<List<OllamaModel>> fetchAvailableModels() async {
-    return await _registry.listAllModels();
+    final models = await _registry.listAllModels();
+    _rememberToolSupport(models);
+    return models;
   }
 
   // ============================================================

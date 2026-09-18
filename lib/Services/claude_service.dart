@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:horizon/Models/chat_tool.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
@@ -86,6 +87,7 @@ class ClaudeService extends ChatService {
   Stream<OllamaMessage> chatStream(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
+    List<ToolDefinition> tools = const [],
   }) async* {
     if (!isConfigured) {
       throw OllamaException('[Claude] API key not set.');
@@ -97,6 +99,9 @@ class ClaudeService extends ChatService {
       'messages': await _encodeMessages(messages),
       'stream': true,
     };
+    if (tools.isNotEmpty) {
+      body['tools'] = tools.map((t) => t.toAnthropicJson()).toList();
+    }
     // Claude 4.x extended-thinking models reject `temperature` outright.
     // Only forward it for models that accept it (legacy 3.x / non-thinking).
     if (_acceptsTemperature(chat.model)) {
@@ -142,8 +147,17 @@ class ClaudeService extends ChatService {
     }
   }
 
+  /// Parses Anthropic's SSE events.
+  ///
+  /// Tool use arrives as its own content block: `content_block_start` names the
+  /// tool and gives it an id, then the arguments stream in as `input_json_delta`
+  /// fragments of a JSON string, closed by `content_block_stop`. Nothing but
+  /// the concatenation of those fragments is valid JSON, so they're buffered
+  /// per block index and decoded at `message_stop`.
   Stream<OllamaMessage> _parseSse(Stream<List<int>> stream, String model) async* {
+    final toolBlocks = <int, _PartialToolUse>{};
     String buffer = '';
+
     await for (final chunk in stream.transform(utf8.decoder)) {
       buffer += chunk;
       while (true) {
@@ -159,15 +173,35 @@ class ClaudeService extends ChatService {
         try {
           final event = json.decode(payload) as Map<String, dynamic>;
           final type = event['type'];
-          if (type == 'content_block_delta') {
-            final delta = event['delta'] as Map<String, dynamic>?;
-            final text = delta?['text'] as String?;
-            if (text != null && text.isNotEmpty) {
-              yield OllamaMessage(
-                text,
-                role: OllamaMessageRole.assistant,
-                model: model,
+
+          if (type == 'content_block_start') {
+            final block = event['content_block'] as Map<String, dynamic>?;
+            if (block?['type'] == 'tool_use') {
+              final index = (event['index'] as num?)?.toInt() ?? 0;
+              toolBlocks[index] = _PartialToolUse(
+                id: (block?['id'] ?? '').toString(),
+                name: (block?['name'] ?? '').toString(),
               );
+            }
+          } else if (type == 'content_block_delta') {
+            final delta = event['delta'] as Map<String, dynamic>?;
+            final deltaType = delta?['type'];
+
+            if (deltaType == 'input_json_delta') {
+              final index = (event['index'] as num?)?.toInt() ?? 0;
+              final fragment = delta?['partial_json'];
+              if (fragment is String) {
+                toolBlocks[index]?.arguments.write(fragment);
+              }
+            } else {
+              final text = delta?['text'] as String?;
+              if (text != null && text.isNotEmpty) {
+                yield OllamaMessage(
+                  text,
+                  role: OllamaMessageRole.assistant,
+                  model: model,
+                );
+              }
             }
           } else if (type == 'message_stop') {
             yield OllamaMessage(
@@ -175,6 +209,7 @@ class ClaudeService extends ChatService {
               role: OllamaMessageRole.assistant,
               model: model,
               done: true,
+              toolCalls: _materializeToolUses(toolBlocks),
             );
           } else if (type == 'error') {
             final err = event['error'] as Map<String, dynamic>?;
@@ -187,14 +222,79 @@ class ClaudeService extends ChatService {
     }
   }
 
+  static List<ToolCall>? _materializeToolUses(Map<int, _PartialToolUse> blocks) {
+    if (blocks.isEmpty) return null;
+    final indices = blocks.keys.toList()..sort();
+    final calls = <ToolCall>[];
+    for (final index in indices) {
+      final block = blocks[index]!;
+      if (block.name.isEmpty) continue;
+      calls.add(ToolCall(
+        id: block.id,
+        name: block.name,
+        // A tool with no parameters streams no deltas at all, leaving an empty
+        // buffer where the API contract implies `{}`.
+        arguments: ToolCall.parseArguments(
+          block.arguments.isEmpty ? '{}' : block.arguments.toString(),
+        ),
+      ));
+    }
+    return calls.isEmpty ? null : calls;
+  }
+
+  /// Encodes the transcript into Anthropic's blocks.
+  ///
+  /// Two constraints shape this: an assistant turn that called tools must
+  /// replay its `tool_use` blocks verbatim, and **all** tool results for that
+  /// turn must arrive as `tool_result` blocks inside a *single* user message.
+  /// Horizon stores one message per tool result, so consecutive tool messages
+  /// are coalesced here — emitting them separately is an immediate 400.
   Future<List<Map<String, dynamic>>> _encodeMessages(List<OllamaMessage> messages) async {
     final out = <Map<String, dynamic>>[];
-    for (final m in messages) {
+
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
       if (m.role == OllamaMessageRole.system) continue;
+
+      if (m.role == OllamaMessageRole.tool) {
+        final results = <Map<String, dynamic>>[];
+        var j = i;
+        while (j < messages.length &&
+            messages[j].role == OllamaMessageRole.tool) {
+          final toolMessage = messages[j];
+          results.add({
+            'type': 'tool_result',
+            'tool_use_id': toolMessage.toolCallId ?? toolMessage.toolName ?? '',
+            'content': toolMessage.content,
+            if (toolMessage.toolFailed) 'is_error': true,
+          });
+          j++;
+        }
+        i = j - 1;
+        out.add({'role': 'user', 'content': results});
+        continue;
+      }
+
+      if (m.role == OllamaMessageRole.assistant && m.hasToolCalls) {
+        final content = <Map<String, dynamic>>[];
+        if (m.content.trim().isNotEmpty) {
+          content.add({'type': 'text', 'text': m.content});
+        }
+        for (final call in m.toolCalls!) {
+          content.add({
+            'type': 'tool_use',
+            'id': call.id,
+            'name': call.name,
+            'input': call.arguments,
+          });
+        }
+        out.add({'role': 'assistant', 'content': content});
+        continue;
+      }
 
       final imagesBase64 = await _encodeImagesBase64(m);
       if (imagesBase64.isEmpty) {
-        out.add({'role': _roleName(m.role), 'content': m.content});
+        out.add({'role': _roleName(m.role), 'content': m.promptContent});
       } else {
         final content = <Map<String, dynamic>>[];
         for (final b64 in imagesBase64) {
@@ -207,8 +307,8 @@ class ClaudeService extends ChatService {
             },
           });
         }
-        if (m.content.isNotEmpty) {
-          content.add({'type': 'text', 'text': m.content});
+        if (m.promptContent.isNotEmpty) {
+          content.add({'type': 'text', 'text': m.promptContent});
         }
         out.add({'role': _roleName(m.role), 'content': content});
       }
@@ -246,6 +346,18 @@ class ClaudeService extends ChatService {
         return 'assistant';
       case OllamaMessageRole.system:
         return 'user';
+      case OllamaMessageRole.tool:
+        // Anthropic has no tool role — results are user-turn content blocks,
+        // handled ahead of this in _encodeMessages.
+        return 'user';
     }
   }
+}
+
+class _PartialToolUse {
+  final String id;
+  final String name;
+  final StringBuffer arguments = StringBuffer();
+
+  _PartialToolUse({required this.id, required this.name});
 }

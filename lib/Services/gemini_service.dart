@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:horizon/Models/chat_tool.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
@@ -103,6 +104,7 @@ class GeminiService extends ChatService {
   Stream<OllamaMessage> chatStream(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
+    List<ToolDefinition> tools = const [],
   }) async* {
     if (!isConfigured) {
       throw OllamaException('[Gemini] API key not set.');
@@ -127,6 +129,11 @@ class GeminiService extends ChatService {
           {'text': chat.systemPrompt}
         ],
       };
+    }
+    if (tools.isNotEmpty) {
+      body['tools'] = [
+        {'functionDeclarations': tools.map((t) => t.toGeminiJson()).toList()},
+      ];
     }
     final encodedBody = json.encode(body);
 
@@ -165,8 +172,14 @@ class GeminiService extends ChatService {
     }
   }
 
+  /// Parses Gemini's SSE stream. Unlike OpenAI and Anthropic, Gemini delivers
+  /// a `functionCall` part whole rather than as JSON fragments — its args are
+  /// already a decoded object — so calls are collected as they appear and
+  /// attached to the terminating message.
   Stream<OllamaMessage> _parseSse(Stream<List<int>> stream, String model) async* {
+    final collectedCalls = <ToolCall>[];
     String buffer = '';
+
     await for (final chunk in stream.transform(utf8.decoder)) {
       buffer += chunk;
       while (true) {
@@ -188,7 +201,23 @@ class GeminiService extends ChatService {
           final content = c['content'] as Map<String, dynamic>?;
           final parts = content?['parts'] as List<dynamic>? ?? const [];
           for (final p in parts) {
-            final text = (p as Map<String, dynamic>)['text'] as String?;
+            if (p is! Map) continue;
+
+            final functionCall = p['functionCall'];
+            if (functionCall is Map) {
+              final name = (functionCall['name'] ?? '').toString();
+              if (name.isNotEmpty) {
+                collectedCalls.add(ToolCall(
+                  // Gemini issues no call id; results correlate by name.
+                  id: 'call_${collectedCalls.length}_$name',
+                  name: name,
+                  arguments: ToolCall.parseArguments(functionCall['args']),
+                ));
+              }
+              continue;
+            }
+
+            final text = p['text'] as String?;
             if (text != null && text.isNotEmpty) {
               yield OllamaMessage(
                 text,
@@ -205,6 +234,7 @@ class GeminiService extends ChatService {
               role: OllamaMessageRole.assistant,
               model: model,
               done: true,
+              toolCalls: collectedCalls.isEmpty ? null : collectedCalls,
             );
             return;
           }
@@ -213,14 +243,66 @@ class GeminiService extends ChatService {
         }
       }
     }
+
+    // Gemini sometimes ends a tool-calling turn without a finishReason.
+    if (collectedCalls.isNotEmpty) {
+      yield OllamaMessage(
+        '',
+        role: OllamaMessageRole.assistant,
+        model: model,
+        done: true,
+        toolCalls: collectedCalls,
+      );
+    }
   }
 
+  /// Encodes the transcript into Gemini `contents`.
+  ///
+  /// Gemini's only roles are `user` and `model`, so a tool result is a user
+  /// turn holding `functionResponse` parts, correlated by tool *name* rather
+  /// than a call id. Consecutive results are merged into one turn to preserve
+  /// the strict user/model alternation Gemini enforces.
   Future<List<Map<String, dynamic>>> _encodeContents(List<OllamaMessage> messages) async {
     final out = <Map<String, dynamic>>[];
-    for (final m in messages) {
+
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
       if (m.role == OllamaMessageRole.system) continue;
 
+      if (m.role == OllamaMessageRole.tool) {
+        final parts = <Map<String, dynamic>>[];
+        var j = i;
+        while (j < messages.length &&
+            messages[j].role == OllamaMessageRole.tool) {
+          final toolMessage = messages[j];
+          parts.add({
+            'functionResponse': {
+              'name': toolMessage.toolName ?? '',
+              // `response` must be an object, never a bare string.
+              'response': {'result': toolMessage.content},
+            },
+          });
+          j++;
+        }
+        i = j - 1;
+        out.add({'role': 'user', 'parts': parts});
+        continue;
+      }
+
       final parts = <Map<String, dynamic>>[];
+
+      if (m.role == OllamaMessageRole.assistant && m.hasToolCalls) {
+        if (m.content.trim().isNotEmpty) {
+          parts.add({'text': m.content});
+        }
+        for (final call in m.toolCalls!) {
+          parts.add({
+            'functionCall': {'name': call.name, 'args': call.arguments},
+          });
+        }
+        out.add({'role': 'model', 'parts': parts});
+        continue;
+      }
 
       final imagesBase64 = await _encodeImagesBase64(m);
       for (final b64 in imagesBase64) {
@@ -231,8 +313,8 @@ class GeminiService extends ChatService {
           },
         });
       }
-      if (m.content.isNotEmpty) {
-        parts.add({'text': m.content});
+      if (m.promptContent.isNotEmpty) {
+        parts.add({'text': m.promptContent});
       }
 
       if (parts.isEmpty) continue;
@@ -265,6 +347,9 @@ class GeminiService extends ChatService {
       case OllamaMessageRole.assistant:
         return 'model';
       case OllamaMessageRole.system:
+        return 'user';
+      case OllamaMessageRole.tool:
+        // Handled ahead of this in _encodeContents; Gemini has no tool role.
         return 'user';
     }
   }

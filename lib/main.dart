@@ -78,6 +78,7 @@ void main() async {
   String? cfAccessClientId;
   String? cfAccessClientSecret;
   String? serpApiKey;
+  String? openrouterKey;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
@@ -88,6 +89,7 @@ void main() async {
     cfAccessClientId = await storage.read(key: 'cf_access_client_id');
     cfAccessClientSecret = await storage.read(key: 'cf_access_client_secret');
     serpApiKey = await storage.read(key: 'serpapi_api_key');
+    openrouterKey = await storage.read(key: 'openrouter_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -109,40 +111,57 @@ void main() async {
   final claudeEnabled = settingsBox.get('enable_anthropic', defaultValue: false) as bool;
   final openaiEnabled = settingsBox.get('enable_openai', defaultValue: false) as bool;
   final geminiEnabled = settingsBox.get('enable_google', defaultValue: false) as bool;
+  // OpenRouter is the recommended cloud path, so unlike the three direct
+  // clients it switches itself on as soon as a key exists — one key, every
+  // hosted model, nothing else to enable.
+  final openrouterEnabled = settingsBox.get(
+    'enable_openrouter',
+    defaultValue: openrouterKey != null && openrouterKey.isNotEmpty,
+  ) as bool;
 
   final ollamaService = OllamaService(
     apiToken: ollamaToken,
     cfAccessClientId: cfAccessClientId,
     cfAccessClientSecret: cfAccessClientSecret,
   );
+  final openrouterService = OpenRouterService(
+    apiKey: openrouterKey,
+    enabled: openrouterEnabled,
+  );
   final claudeService = ClaudeService(apiKey: claudeKey, enabled: claudeEnabled);
   final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl, enabled: openaiEnabled);
   final geminiService = GeminiService(apiKey: geminiKey, enabled: geminiEnabled);
   final registry = ChatServiceRegistry(
     ollama: ollamaService,
+    openrouter: openrouterService,
     claude: claudeService,
     openai: openaiService,
     gemini: geminiService,
   );
+  final toolService = ToolService(webSearch: webSearchService);
 
   runApp(
     MultiProvider(
       providers: [
         Provider(create: (_) => ollamaService),
+        Provider(create: (_) => openrouterService),
         Provider(create: (_) => claudeService),
         Provider(create: (_) => openaiService),
         Provider(create: (_) => geminiService),
         Provider(create: (_) => registry),
         Provider(create: (_) => webSearchService),
+        Provider(create: (_) => toolService),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
+        Provider(create: (_) => AttachmentService()),
         ChangeNotifierProvider(
           create: (context) => ChatProvider(
             registry: context.read(),
             databaseService: context.read(),
             webSearch: context.read(),
+            toolService: context.read(),
           ),
         ),
         ChangeNotifierProvider(
@@ -150,6 +169,7 @@ void main() async {
             chatProvider: context.read(),
             permissionService: context.read(),
             imageService: context.read(),
+            attachmentService: context.read(),
             registry: context.read(),
           ),
         ),

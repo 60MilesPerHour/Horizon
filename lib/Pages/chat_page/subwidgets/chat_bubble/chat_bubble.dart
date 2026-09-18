@@ -8,9 +8,12 @@ import 'package:url_launcher/url_launcher_string.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_artifact_block.dart';
+import 'chat_bubble_attachment.dart';
+import 'chat_bubble_code_block.dart';
 import 'chat_bubble_image.dart';
 import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart';
+import 'chat_bubble_tool_card.dart';
 
 final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
   <md.BlockSyntax>[
@@ -29,6 +32,9 @@ final TextStyle _markdownCodeStyle = GoogleFonts.sourceCodePro();
 final Map<String, MarkdownElementBuilder> _markdownBuilders = {
   'think': ThinkBlockBuilder(),
   'artifact': ArtifactBlockBuilder(),
+  // `pre` only wraps fenced blocks, so inline `code` keeps the stylesheet's
+  // monospace run treatment rather than becoming a highlighted card.
+  'pre': CodeBlockBuilder(),
 };
 
 class ChatBubble extends StatefulWidget {
@@ -75,6 +81,17 @@ class _ChatBubbleState extends State<ChatBubble>
     super.build(context); // required by AutomaticKeepAliveClientMixin
     final message = widget.message;
     final streamingContent = widget.streamingContent;
+
+    // Tool steps aren't messages the user wrote or the model said, so the
+    // Copy/Edit/Regenerate/Delete menu doesn't apply — editing a tool result
+    // would silently rewrite the evidence the answer rests on. A turn with
+    // both prose and tool calls keeps the menu and shows the calls above the
+    // text; a tool-calls-only turn has nothing to act on.
+    if (message.role == OllamaMessageRole.tool ||
+        (message.hasToolCalls && message.content.trim().isEmpty)) {
+      return _ToolStep(message: message);
+    }
+
     final actions = ChatBubbleActions(message);
 
     return ChatBubbleMenu(
@@ -135,6 +152,20 @@ class _ChatBubbleBody extends StatelessWidget {
                   .map((imageFile) => ChatBubbleImage(imageFile: imageFile))
                   .toList(),
             ),
+          // Documents show as chips; tapping one reveals the extracted text
+          // that was actually sent.
+          if (message.hasAttachments)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment:
+                  isSentFromUser ? WrapAlignment.end : WrapAlignment.start,
+              children: message.attachments!
+                  .map((attachment) => AttachmentChip(attachment: attachment))
+                  .toList(),
+            ),
+          // Mixed turn: the calls it made, then what it said.
+          if (message.hasToolCalls) ChatBubbleToolCard(message: message),
           Container(
             padding: isSentFromUser ? const EdgeInsets.all(10.0) : null,
             constraints: BoxConstraints(
@@ -189,6 +220,29 @@ class _ChatBubbleBody extends StatelessWidget {
   /// Otherwise, the alignment is [Alignment.centerLeft].
   CrossAxisAlignment get bubbleAlignment =>
       isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+}
+
+/// A tool call or tool result in the transcript. Deliberately narrower and
+/// quieter than a message bubble: these are the machinery behind an answer,
+/// not the answer, and they shouldn't compete with it for attention.
+class _ToolStep extends StatelessWidget {
+  final OllamaMessage message;
+
+  const _ToolStep({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(25.0, 2.0, 25.0, 2.0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520.0),
+          child: ChatBubbleToolCard(message: message),
+        ),
+      ),
+    );
+  }
 }
 
 /// Plain-text view of the in-flight streaming response.

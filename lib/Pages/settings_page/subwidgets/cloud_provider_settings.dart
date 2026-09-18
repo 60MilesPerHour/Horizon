@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/openai_service.dart';
+import 'package:horizon/Services/openrouter_service.dart';
 
 const _storage = FlutterSecureStorage();
 
@@ -14,44 +15,199 @@ class CloudProviderSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Cloud Providers',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          'Cloud Models',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
-          'API keys are stored in your device\'s secure storage. Each provider '
-          'is off by default — flip its switch to bring it online. A disabled '
-          'provider is fully dead: no models, never selectable.',
-          style: Theme.of(context).textTheme.bodySmall,
+          'API keys are stored in your device\'s secure storage. Ollama keeps '
+          'working with or without any of this.',
+          style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
         _ProviderKillSwitch(
-          label: 'Claude (Anthropic)',
-          hiveKey: 'enable_anthropic',
-          onChanged: (v) => context.read<ClaudeService>().enabled = v,
+          label: 'OpenRouter',
+          hiveKey: 'enable_openrouter',
+          onChanged: (v) => context.read<OpenRouterService>().enabled = v,
         ),
-        const _AnthropicKeyField(),
-        const SizedBox(height: 16),
-        _ProviderKillSwitch(
-          label: 'OpenAI',
-          hiveKey: 'enable_openai',
-          onChanged: (v) => context.read<OpenAIService>().enabled = v,
+        Text(
+          'One key for Claude, GPT, Gemini, Llama, Qwen and several hundred '
+          'others, on one bill. Tool support and image input are read from '
+          'OpenRouter per model, so the picker shows what each one can '
+          'actually do.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
-        const _OpenAIKeyField(),
-        const SizedBox(height: 16),
-        _ProviderKillSwitch(
-          label: 'Gemini (Google)',
-          hiveKey: 'enable_google',
-          onChanged: (v) => context.read<GeminiService>().enabled = v,
+        const SizedBox(height: 8),
+        const _OpenRouterKeyField(),
+        const SizedBox(height: 24),
+
+        // The direct clients predate OpenRouter here and are kept so existing
+        // chats keep routing and so anyone who'd rather not add a middleman
+        // still can. Folded away because for most setups OpenRouter above
+        // replaces all three.
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8.0),
+          title: const Text('Direct provider APIs'),
+          subtitle: Text(
+            'Advanced — your own Anthropic / OpenAI / Google keys',
+            style: theme.textTheme.bodySmall,
+          ),
+          children: [
+            Text(
+              'Each is off by default. A disabled provider is fully dead: no '
+              'models, never selectable.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            _ProviderKillSwitch(
+              label: 'Claude (Anthropic)',
+              hiveKey: 'enable_anthropic',
+              onChanged: (v) => context.read<ClaudeService>().enabled = v,
+            ),
+            const _AnthropicKeyField(),
+            const SizedBox(height: 16),
+            _ProviderKillSwitch(
+              label: 'OpenAI',
+              hiveKey: 'enable_openai',
+              onChanged: (v) => context.read<OpenAIService>().enabled = v,
+            ),
+            const _OpenAIKeyField(),
+            const SizedBox(height: 16),
+            _ProviderKillSwitch(
+              label: 'Gemini (Google)',
+              hiveKey: 'enable_google',
+              onChanged: (v) => context.read<GeminiService>().enabled = v,
+            ),
+            const _GeminiKeyField(),
+          ],
         ),
-        const _GeminiKeyField(),
       ],
+    );
+  }
+}
+
+class _OpenRouterKeyField extends StatefulWidget {
+  const _OpenRouterKeyField();
+
+  @override
+  State<_OpenRouterKeyField> createState() => _OpenRouterKeyFieldState();
+}
+
+class _OpenRouterKeyFieldState extends State<_OpenRouterKeyField> {
+  final _controller = TextEditingController();
+  bool _obscure = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final v = await _storage.read(key: 'openrouter_api_key');
+      if (!mounted) return;
+      _controller.text = v ?? '';
+    } catch (_) {
+      // Secure storage may be unavailable without a keyring; tolerate.
+    } finally {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final value = _controller.text.trim();
+    final service = context.read<OpenRouterService>();
+    try {
+      if (value.isEmpty) {
+        await _storage.delete(key: 'openrouter_api_key');
+      } else {
+        await _storage.write(key: 'openrouter_api_key', value: value);
+      }
+    } catch (_) {}
+    service.apiKey = value;
+
+    // Pasting a key is the whole intent — leaving the provider switched off
+    // afterwards just makes the models silently missing.
+    if (value.isNotEmpty && !service.enabled) {
+      service.enabled = true;
+      await Hive.box('settings').put('enable_openrouter', true);
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value.isEmpty ? 'OpenRouter key cleared' : 'OpenRouter key saved',
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    // Save on the way out so a pasted key isn't lost by closing Settings
+    // without pressing anything — the exact bug that made web search look
+    // broken in v3.6.2.
+    final value = _controller.text.trim();
+    if (value.isNotEmpty) {
+      _storage.write(key: 'openrouter_api_key', value: value).catchError((_) {});
+    }
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      enabled: _loaded,
+      obscureText: _obscure,
+      decoration: InputDecoration(
+        labelText: 'OpenRouter API Key',
+        hintText: 'sk-or-v1-...',
+        border: const OutlineInputBorder(),
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _save,
+            ),
+          ],
+        ),
+      ),
+      // Apply as you type so the key is live the moment the user leaves the
+      // field, with no explicit save step; dispose() then persists it. Pasting
+      // and closing Settings without pressing save is how the SerpAPI key got
+      // silently dropped in v3.6.2.
+      onChanged: (value) {
+        final trimmed = value.trim();
+        final service = context.read<OpenRouterService>();
+        service.apiKey = trimmed;
+        if (trimmed.isNotEmpty && !service.enabled) {
+          service.enabled = true;
+          Hive.box('settings').put('enable_openrouter', true);
+        }
+      },
+      onSubmitted: (_) => _save(),
     );
   }
 }

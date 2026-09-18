@@ -7,6 +7,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import 'package:horizon/Models/attachment.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
@@ -45,8 +46,10 @@ void main() {
       chatProvider: fakeChatProvider,
       permissionService: fakePermissionService,
       imageService: fakeImageService,
+      attachmentService: AttachmentService(),
       registry: ChatServiceRegistry(
         ollama: OllamaService(),
+        openrouter: OpenRouterService(),
         claude: ClaudeService(),
         openai: OpenAIService(),
         gemini: GeminiService(),
@@ -373,6 +376,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   bool generateTitleCalled = false;
   String? lastSentPrompt;
   List<File>? lastSentImages;
+  List<Attachment>? lastSentAttachments;
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -443,19 +447,26 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     OllamaModel model,
     String text, {
     List<File>? images,
+    List<Attachment>? attachments,
   }) async {
     createNewChatCalled = true;
     _currentChat = createTestChat('new-chat-id');
     sendPromptCalled = true;
     lastSentPrompt = text;
     lastSentImages = images;
+    lastSentAttachments = attachments;
   }
 
   @override
-  Future<void> sendPrompt(String prompt, {List<File>? images}) async {
+  Future<void> sendPrompt(
+    String prompt, {
+    List<File>? images,
+    List<Attachment>? attachments,
+  }) async {
     sendPromptCalled = true;
     lastSentPrompt = prompt;
     lastSentImages = images;
+    lastSentAttachments = attachments;
   }
 
   @override
@@ -510,6 +521,13 @@ class FakeImageService implements ImageService {
 class FakePathProviderPlatform extends Fake with MockPlatformInterfaceMixin implements PathProviderPlatform {
   @override
   Future<String?> getApplicationDocumentsPath() async {
+    return path.join(Directory.current.path, 'test', 'assets');
+  }
+
+  // PathManager reads the support directory on Linux and the documents
+  // directory elsewhere; without this the whole file fails to load on Linux.
+  @override
+  Future<String?> getApplicationSupportPath() async {
     return path.join(Directory.current.path, 'test', 'assets');
   }
 }

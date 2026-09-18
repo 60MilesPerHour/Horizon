@@ -238,6 +238,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "9.2.2"
+  flutter_highlight:
+    dependency: "direct main"
+    description:
+      name: flutter_highlight
+      sha256: "7b96333867aa07e122e245c033b8ad622e4e3a42a1a2372cbb098a2541d8782c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.0"
   flutter_image_compress:
     dependency: "direct main"
     description:
@@ -416,6 +424,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.3.0"
+  highlight:
+    dependency: "direct main"
+    description:
+      name: highlight
+      sha256: "5353a83ffe3e3eca7df0abfb72dcf3fa66cc56b953728e7113ad4ad88497cf21"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.0"
   hive:
     dependency: "direct main"
     description:
@@ -433,7 +449,7 @@ packages:
     source: hosted
     version: "1.1.0"
   html:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: html
       sha256: "1fc58edeaec4307368c60d59b7e15b9d658b57d7f3125098b6294153c75337ec"
@@ -560,6 +576,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.5"
+  intl:
+    dependency: transitive
+    description:
+      name: intl
+      sha256: d6f56758b7d3014a48af9701c085700aac781a92a87a62b1333b46d8879661cf
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.19.0"
   io:
     dependency: transitive
     description:
@@ -1109,6 +1133,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  syncfusion_flutter_core:
+    dependency: transitive
+    description:
+      name: syncfusion_flutter_core
+      sha256: "325f519ce4ad8edd81811c21b853d72018529e353584490824da0555156ba076"
+      url: "https://pub.dev"
+    source: hosted
+    version: "27.2.5"
+  syncfusion_flutter_pdf:
+    dependency: "direct main"
+    description:
+      name: syncfusion_flutter_pdf
+      sha256: da7fb9d156fafdce7099dc711c1a2dc522c48361188bd4be78520b22c99bbafd
+      url: "https://pub.dev"
+    source: hosted
+    version: "27.2.5"
   synchronized:
     dependency: transitive
     description:

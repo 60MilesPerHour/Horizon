@@ -19,15 +19,24 @@ class DatabaseService {
     }
   }
 
+  /// Current schema version.
+  ///   1 → original
+  ///   2 → chats.provider
+  ///   3 → message attachments + tool calls (and 'tool' as a legal role)
+  static const int schemaVersion = 3;
+
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 2,
+      version: schemaVersion,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute(
             "ALTER TABLE chats ADD COLUMN provider TEXT NOT NULL DEFAULT 'ollama';",
           );
+        }
+        if (oldVersion < 3) {
+          await _upgradeToV3(db);
         }
       },
       onCreate: (Database db, int version) async {
@@ -40,31 +49,66 @@ options TEXT,
 provider TEXT NOT NULL DEFAULT 'ollama'
 ) WITHOUT ROWID;''');
 
-        await db.execute('''CREATE TABLE IF NOT EXISTS messages (
+        await db.execute(_createMessagesTable('messages'));
+        await db.execute(_createCleanupJobsTable);
+        await db.execute(_createCleanupTrigger);
+      },
+    );
+  }
+
+  static String _createMessagesTable(String name) => '''CREATE TABLE IF NOT EXISTS $name (
 message_id TEXT PRIMARY KEY,
 chat_id TEXT NOT NULL,
 content TEXT NOT NULL,
 images TEXT,
-role TEXT CHECK(role IN ('user', 'assistant', 'system')) NOT NULL,
+attachments TEXT,
+tool_calls TEXT,
+tool_call_id TEXT,
+tool_name TEXT,
+tool_failed INTEGER NOT NULL DEFAULT 0,
+role TEXT CHECK(role IN ('user', 'assistant', 'system', 'tool')) NOT NULL,
 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 FOREIGN KEY (chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE
-) WITHOUT ROWID;''');
+) WITHOUT ROWID;''';
 
-        // Create cleanup_jobs table
-        await db.execute('''CREATE TABLE IF NOT EXISTS cleanup_jobs (
+  static const String _createCleanupJobsTable =
+      '''CREATE TABLE IF NOT EXISTS cleanup_jobs (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
-image_paths TEXT NOT NULL
-)''');
+image_paths TEXT,
+attachment_paths TEXT
+)''';
 
-        // Create trigger to handle image deletion
-        await db.execute('''CREATE TRIGGER IF NOT EXISTS delete_images_trigger
+  /// Queues a deleted message's files for removal from disk. Fires for images
+  /// and document attachments alike; either column may be null.
+  static const String _createCleanupTrigger =
+      '''CREATE TRIGGER IF NOT EXISTS delete_images_trigger
 AFTER DELETE ON messages
-WHEN OLD.images IS NOT NULL
+WHEN OLD.images IS NOT NULL OR OLD.attachments IS NOT NULL
 BEGIN
-  INSERT INTO cleanup_jobs (image_paths) VALUES (OLD.images);
-END;''');
-      },
-    );
+  INSERT INTO cleanup_jobs (image_paths, attachment_paths)
+  VALUES (OLD.images, OLD.attachments);
+END;''';
+
+  /// v3 adds the attachment/tool columns AND widens the `role` CHECK to admit
+  /// 'tool'. SQLite can't alter a CHECK constraint in place, so the messages
+  /// table is rebuilt: copy rows across, swap the table, recreate the trigger.
+  /// The trigger is dropped first because it names `messages` directly and
+  /// SQLite would otherwise rewrite it to point at the temporary table during
+  /// the rename.
+  static Future<void> _upgradeToV3(Database db) async {
+    await db.execute('DROP TRIGGER IF EXISTS delete_images_trigger;');
+    await db.execute(_createMessagesTable('messages_v3'));
+    await db.execute('''INSERT INTO messages_v3
+(message_id, chat_id, content, images, role, timestamp)
+SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
+    await db.execute('DROP TABLE messages;');
+    await db.execute('ALTER TABLE messages_v3 RENAME TO messages;');
+    await db.execute(_createCleanupTrigger);
+
+    // cleanup_jobs predates attachments and had image_paths NOT NULL, which
+    // the widened trigger would violate for an attachment-only message.
+    await db.execute('DROP TABLE IF EXISTS cleanup_jobs;');
+    await db.execute(_createCleanupJobsTable);
   }
 
   Future<void> close() async => _db.close();
@@ -234,22 +278,23 @@ ORDER BY last_update DESC;''');
   Future<void> _cleanupDeletedImages() async {
     final List<Map<String, dynamic>> results = await _db.query(
       'cleanup_jobs',
-      columns: ['id', 'image_paths'],
-      where: 'image_paths IS NOT NULL',
+      columns: ['id', 'image_paths', 'attachment_paths'],
     );
 
     for (final result in results) {
       try {
-        final images = _constructImages(result['image_paths']);
-        if (images == null) continue;
+        final files = <File>[
+          ...?_constructImages(result['image_paths'] as String?),
+          ...?_constructAttachments(result['attachment_paths'] as String?),
+        ];
 
-        for (final image in images) {
-          if (await image.exists()) {
-            await image.delete();
+        for (final file in files) {
+          if (await file.exists()) {
+            await file.delete();
           }
         }
 
-        // Delete the row after images are deleted
+        // Delete the row after the files are gone
         await _db.delete(
           'cleanup_jobs',
           where: 'id = ?',
@@ -271,5 +316,22 @@ ORDER BY last_update DESC;''');
     }
 
     return null;
+  }
+
+  /// Attachments serialise as objects, not bare paths, so the stored blob is
+  /// a different shape from `images` — pick the `path` field out of each.
+  static List<File>? _constructAttachments(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return null;
+    return decoded
+        .whereType<Map>()
+        .map((entry) => (entry['path'] ?? '').toString())
+        .where((relative) => relative.isNotEmpty)
+        .map((relative) => File(path.join(
+              PathManager.instance.documentsDirectory.path,
+              relative,
+            )))
+        .toList();
   }
 }

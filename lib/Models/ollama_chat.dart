@@ -40,6 +40,11 @@ class OllamaChat {
   /// pick the obvious one. Protects against rows written before per-chat
   /// routing was wired correctly, or with a stale schema.
   static String inferProvider(String model, String? storedProvider) {
+    // OpenRouter ids are `vendor/model`, so none of the bare-prefix rules
+    // below can match one — but trust the stored value outright rather than
+    // relying on that, since the vendor list grows on OpenRouter's schedule.
+    if (storedProvider == 'openrouter') return 'openrouter';
+
     final lower = model.toLowerCase();
     if (lower.startsWith('claude-')) return 'anthropic';
     if (lower.startsWith('gpt-') || lower.startsWith('o1') ||
@@ -117,11 +122,16 @@ class OllamaChatOptions {
   /// Models without a thinking phase ignore this flag.
   bool? think;
 
-  /// Whether to run a web search on each prompt and inject the results into
-  /// the model's context. Provider-agnostic (works for every backend) because
-  /// it's plain context, not a tool protocol. Persisted per-chat. Like
-  /// [think], this is NOT part of the Ollama `options` payload — see [toMap].
-  bool webSearch;
+  /// Whether the model may use tools — web search, page fetching, and the
+  /// clock. On by default, because a tool is only ever invoked when the model
+  /// decides it needs one.
+  ///
+  /// Models that advertise tool support get the tools declared natively in
+  /// their provider's protocol. Models that don't fall back to the older
+  /// prompt-convention search pass, and only when a search backend is
+  /// configured. Persisted per-chat; like [think], NOT part of the Ollama
+  /// `options` payload — see [toMap].
+  bool tools;
 
   /// Whether to ask the model to emit substantial standalone deliverables
   /// (full documents, complete files) wrapped in `<artifact>` tags, which the
@@ -146,9 +156,9 @@ class OllamaChatOptions {
     double? topP,
     double? minP,
     this.think,
-    bool? webSearch,
+    bool? tools,
     bool? artifacts,
-  })  : webSearch = webSearch ?? false,
+  })  : tools = tools ?? true,
         artifacts = artifacts ?? false,
         mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
@@ -185,7 +195,12 @@ class OllamaChatOptions {
       topP: map['top_p']?.toDouble(),
       minP: map['min_p']?.toDouble(),
       think: map['think'] is bool ? map['think'] as bool : null,
-      webSearch: map['web_search'] is bool ? map['web_search'] as bool : null,
+      // `web_search` is the pre-v3.8 key for the same switch: a chat that had
+      // search on keeps tools on, and one that predates either key gets the
+      // new default rather than being silently opted out.
+      tools: map['tools'] is bool
+          ? map['tools'] as bool
+          : (map['web_search'] is bool ? map['web_search'] as bool : null),
       artifacts: map['artifacts'] is bool ? map['artifacts'] as bool : null,
     );
   }
@@ -222,7 +237,9 @@ class OllamaChatOptions {
   String toJson() {
     final m = toMap();
     if (think != null) m['think'] = think;
-    if (webSearch) m['web_search'] = true;
+    // Always written, unlike the flags below: `tools` defaults to true, so
+    // omitting it when false would silently re-enable it on the next load.
+    m['tools'] = tools;
     if (artifacts) m['artifacts'] = true;
     return jsonEncode(m);
   }

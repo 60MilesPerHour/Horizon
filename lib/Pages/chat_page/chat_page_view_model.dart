@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:horizon/Constants/constants.dart';
+import 'package:horizon/Models/attachment.dart';
 import 'package:horizon/Models/chat_preset.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
@@ -19,16 +20,19 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
+  final AttachmentService _attachmentService;
   final ChatServiceRegistry _registry;
 
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
     required ImageService imageService,
+    required AttachmentService attachmentService,
     required ChatServiceRegistry registry,
   })  : _chatProvider = chatProvider,
         _permissionService = permissionService,
         _imageService = imageService,
+        _attachmentService = attachmentService,
         _registry = registry {
     _initialize();
   }
@@ -79,9 +83,10 @@ class ChatPageViewModel extends ChangeNotifier {
       notifyListeners();
     });
 
-    // Listen for app exit to delete unused attached images
+    // Listen for app exit to delete staged-but-unsent files
     _appLifecycleListener = AppLifecycleListener(onExitRequested: () async {
       await _imageService.deleteImages(imageFiles);
+      await _attachmentService.deleteAll(attachments);
       return AppExitResponse.exit;
     });
   }
@@ -124,9 +129,13 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether the current chat is thinking (waiting for response)
   bool get isThinking => _chatProvider.isCurrentChatThinking;
 
-  /// Whether the current chat is in the web-search fetch phase. Drives the
-  /// "Searching…" label on the awaiting-reply indicator.
+  /// Whether the current chat is running a tool. Drives the activity label on
+  /// the awaiting-reply indicator.
   bool get isSearching => _chatProvider.isCurrentChatSearching;
+
+  /// What the current chat is doing out-of-band ("Reading example.com…"), or
+  /// null when it's just generating.
+  String? get activityLabel => _chatProvider.currentChatActivity;
 
   /// The current chat error, if any
   OllamaException? get currentError => _chatProvider.currentChatError;
@@ -269,6 +278,44 @@ class ChatPageViewModel extends ChangeNotifier {
   }
 
   // ============================================================
+  // Document Attachments
+  // ============================================================
+
+  final List<Attachment> _attachments = [];
+
+  /// Documents staged for the next message.
+  List<Attachment> get attachments => List.unmodifiable(_attachments);
+
+  bool get hasAttachments => _attachments.isNotEmpty;
+
+  /// Whether anything at all is staged — used to let an attachment-only
+  /// message send with no typed prompt.
+  bool get hasStagedFiles => _imageFiles.isNotEmpty || _attachments.isNotEmpty;
+
+  /// Opens the document picker and stages whatever parsed successfully.
+  /// Per-file failures are reported through [onError] rather than aborting.
+  Future<void> pickAttachments({
+    void Function(String message)? onError,
+  }) async {
+    final picked = await _attachmentService.pickFiles(onError: onError);
+    if (picked.isEmpty) return;
+    _attachments.addAll(picked);
+    notifyListeners();
+  }
+
+  Future<void> removeAttachment(Attachment attachment) async {
+    _attachments.remove(attachment);
+    notifyListeners();
+    await _attachmentService.delete(attachment);
+  }
+
+  List<Attachment> _takeAttachments() {
+    final taken = _attachments.toList();
+    _attachments.clear();
+    return taken;
+  }
+
+  // ============================================================
   // Operations
   // ============================================================
 
@@ -278,8 +325,10 @@ class ChatPageViewModel extends ChangeNotifier {
     required Future<void> Function() onModelSelectionRequired,
     required void Function() onServerNotConfigured,
   }) async {
-    // Early return if nothing to send or currently streaming
-    if (!hasText || isStreaming) {
+    // Early return if nothing to send or currently streaming. A message with
+    // no text but a staged file is still a message — "summarise this" is
+    // implied, and OllamaMessage.promptContent says so explicitly.
+    if ((!hasText && !hasStagedFiles) || isStreaming) {
       return false;
     }
 
@@ -307,6 +356,7 @@ class ChatPageViewModel extends ChangeNotifier {
       // between createChat and sendPrompt.
       final prompt = _takeTextFieldValue();
       final images = _takeImages();
+      final attachments = _takeAttachments();
       _presets = ChatPresets.randomPresets;
       notifyListeners();
 
@@ -314,21 +364,27 @@ class ChatPageViewModel extends ChangeNotifier {
         _selectedModel!,
         prompt,
         images: images,
+        attachments: attachments,
       );
 
       // Generate title for the new chat (best-effort, fires in parallel
       // with the response stream).
       await _chatProvider.generateTitleForCurrentChat();
     } else {
-      // Get and clear the prompt and images
+      // Get and clear the prompt, images and attachments
       final prompt = _takeTextFieldValue();
       final images = _takeImages();
+      final attachments = _takeAttachments();
 
       // Notify listeners (text field is cleared)
       notifyListeners();
 
       // Send the prompt
-      await _chatProvider.sendPrompt(prompt, images: images);
+      await _chatProvider.sendPrompt(
+        prompt,
+        images: images,
+        attachments: attachments,
+      );
     }
 
     return true;

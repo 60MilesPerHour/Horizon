@@ -5,16 +5,25 @@ import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/openai_service.dart';
+import 'package:horizon/Services/openrouter_service.dart';
 
 /// Routes chat operations to the right backend based on `chat.provider`.
+///
+/// `openrouter` is the recommended cloud backend — one key for every hosted
+/// model. The three direct clients (`anthropic`, `openai`, `google`) remain
+/// so chats created against them keep working and so a user with an existing
+/// key can still talk to those APIs without a middleman; all three ship
+/// disabled by default.
 class ChatServiceRegistry {
   final OllamaService ollama;
+  final OpenRouterService openrouter;
   final ClaudeService claude;
   final OpenAIService openai;
   final GeminiService gemini;
 
   ChatServiceRegistry({
     required this.ollama,
+    required this.openrouter,
     required this.claude,
     required this.openai,
     required this.gemini,
@@ -22,6 +31,8 @@ class ChatServiceRegistry {
 
   ChatService resolve(String provider) {
     switch (provider) {
+      case 'openrouter':
+        return openrouter;
       case 'anthropic':
         return claude;
       case 'openai':
@@ -36,7 +47,7 @@ class ChatServiceRegistry {
 
   ChatService forChat(OllamaChat chat) => resolve(chat.provider);
 
-  List<ChatService> get all => [ollama, claude, openai, gemini];
+  List<ChatService> get all => [ollama, openrouter, claude, openai, gemini];
 
   /// Fetch models from every configured provider. Per-provider failures are
   /// tolerated so one bad key doesn't hide the rest — but if EVERY provider

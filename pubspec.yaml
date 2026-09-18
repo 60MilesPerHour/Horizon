@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 3.7.5+43
+version: 3.8.0+44
 
 environment:
   sdk: ^3.5.4
@@ -94,8 +94,20 @@ dependencies:
 
   share_plus: ^12.0.1
 
-  # File picker for chat import
+  # File picker for chat import and document attachments
   file_picker: ^8.1.4
+
+  # Text extraction from attached PDFs. Pure Dart — no native library, so the
+  # same code path works on Android, macOS, Windows and Linux without touching
+  # any of the four build configs.
+  syncfusion_flutter_pdf: ^27.2.5
+
+  # HTML -> text for the web_fetch tool
+  html: ^0.15.4
+
+  # Syntax highlighting for fenced code blocks in replies
+  flutter_highlight: ^0.7.0
+  highlight: ^0.7.0
 
   notification_centre: ^0.0.3
 

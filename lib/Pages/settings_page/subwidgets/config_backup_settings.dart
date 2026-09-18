@@ -12,6 +12,7 @@ import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/openai_service.dart';
+import 'package:horizon/Services/openrouter_service.dart';
 
 /// Export / import of API keys and server settings, so a fresh install (or a
 /// second device) can be set up from one file instead of re-typing every key.
@@ -84,6 +85,7 @@ class ConfigBackupSettings extends StatelessWidget {
     final messenger = ScaffoldMessenger.of(context);
     // Capture the live services before any await so we don't touch a stale
     // context after the file picker / async writes.
+    final openrouter = context.read<OpenRouterService>();
     final claude = context.read<ClaudeService>();
     final openai = context.read<OpenAIService>();
     final gemini = context.read<GeminiService>();
@@ -122,6 +124,14 @@ class ConfigBackupSettings extends StatelessWidget {
       // Push restored secrets into the running services so they take effect
       // immediately, without an app restart.
       final p = imported.providers;
+      if (p.containsKey('openrouter_api_key')) {
+        final key = p['openrouter_api_key']!;
+        openrouter.apiKey = key;
+        // The enable flag rides along in the settings block, but a restored
+        // key with the switch left off is indistinguishable from a broken
+        // restore, so turn it on when there's a key to use.
+        if (key.isNotEmpty) openrouter.enabled = true;
+      }
       if (p.containsKey('anthropic_api_key')) {
         claude.apiKey = p['anthropic_api_key']!;
       }

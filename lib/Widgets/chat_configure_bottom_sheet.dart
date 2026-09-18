@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:horizon/Models/chat_configure_arguments.dart';
 import 'package:horizon/Models/ollama_chat.dart';
-import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/chat_export_service.dart';
@@ -96,9 +95,9 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
         ),
         // The chat configurations section
         const SizedBox(height: 16),
-        _WebSearchTile(
-          value: _chatOptions.webSearch,
-          onChanged: (v) => setState(() => _chatOptions.webSearch = v),
+        _ToolsTile(
+          value: _chatOptions.tools,
+          onChanged: (v) => setState(() => _chatOptions.tools = v),
         ),
         const SizedBox(height: 16),
         _ArtifactsTile(
@@ -689,19 +688,22 @@ enum ChatConfigureBottomSheetAction {
   delete,
 }
 
-/// Per-chat web-search toggle. When on, each prompt is enriched with live
-/// search results before being sent to the model — works for every provider.
-/// The subtitle nudges the user to Settings when no backend is configured yet.
-class _WebSearchTile extends StatelessWidget {
+/// Per-chat tool toggle: web search, page fetching, and the clock.
+///
+/// One switch rather than one per tool, because the model decides which to
+/// call. The subtitle names the tools that are actually live — web search
+/// needs a backend key, so listing it unconditionally would promise something
+/// the app can't deliver.
+class _ToolsTile extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
 
-  const _WebSearchTile({required this.value, required this.onChanged});
+  const _ToolsTile({required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final configured = context.read<WebSearchService>().isConfigured;
+    final searchConfigured = context.read<WebSearchService>().isConfigured;
 
     return Container(
       decoration: BoxDecoration(
@@ -709,16 +711,16 @@ class _WebSearchTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(8.0),
       ),
       child: SwitchListTile(
-        // Without a configured backend the feature is a silent no-op, so don't
-        // let the switch read "on" — disable it and point the user at Settings.
-        value: configured && value,
-        onChanged: configured ? onChanged : null,
-        secondary: const Icon(Icons.travel_explore_outlined),
-        title: const Text('Web search'),
+        value: value,
+        onChanged: onChanged,
+        secondary: const Icon(Icons.handyman_outlined),
+        title: const Text('Tools'),
         subtitle: Text(
-          configured
-              ? 'Let the model search the web when a question needs current info, with cited sources.'
-              : 'Set up a search backend in Settings to enable this.',
+          searchConfigured
+              ? 'The model can search the web, read pages, and check the time '
+                  'when a question needs it — with cited sources.'
+              : 'The model can read web pages and check the time. Add a search '
+                  'backend in Settings to let it search too.',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

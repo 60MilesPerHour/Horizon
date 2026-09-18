@@ -363,4 +363,11 @@ class FakePathProviderPlatform extends Fake
   Future<String?> getApplicationDocumentsPath() async {
     return path.join(Directory.current.path, 'test', 'assets');
   }
+
+  // PathManager reads the support directory on Linux and the documents
+  // directory elsewhere; without this the whole file fails to load on Linux.
+  @override
+  Future<String?> getApplicationSupportPath() async {
+    return path.join(Directory.current.path, 'test', 'assets');
+  }
 }

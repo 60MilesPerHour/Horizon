@@ -1,242 +1,49 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:http/http.dart' as http;
-import 'package:horizon/Models/ollama_chat.dart';
-import 'package:horizon/Models/ollama_exception.dart';
-import 'package:horizon/Models/ollama_message.dart';
-import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Models/model_capabilities.dart';
-import 'package:horizon/Services/chat_service.dart';
-import 'package:horizon/Utils/horizon_http.dart';
-import 'package:horizon/Utils/http_error_formatter.dart';
+import 'package:horizon/Models/ollama_model.dart';
+import 'package:horizon/Services/openai_compatible_service.dart';
 
-/// OpenAI Chat Completions API client (also works with OpenAI-compatible endpoints).
-class OpenAIService extends ChatService {
-  String _apiKey;
-  String _baseUrl;
-
-  /// Hard kill switch. When false the provider is fully dead — no models
-  /// listed, no routing, cannot be selected — regardless of whether a key is
-  /// set. Defaults to off so the app is Ollama-only until explicitly enabled.
-  bool enabled;
-
-  OpenAIService({String? apiKey, String? baseUrl, this.enabled = false})
-      : _apiKey = apiKey ?? '',
-        _baseUrl = baseUrl ?? 'https://api.openai.com';
-
-  set apiKey(String? value) => _apiKey = value ?? '';
-  String get apiKey => _apiKey;
-
-  set baseUrl(String? value) => _baseUrl = (value == null || value.isEmpty) ? 'https://api.openai.com' : value;
-  String get baseUrl => _baseUrl;
+/// OpenAI Chat Completions API client.
+///
+/// Kept for talking to OpenAI (or any OpenAI-compatible endpoint) directly
+/// with your own key. For the usual case of "one key, every model", prefer
+/// [OpenRouterService] — same protocol, one bill, and per-model capability
+/// metadata the OpenAI model list doesn't provide.
+class OpenAIService extends OpenAiCompatibleService {
+  OpenAIService({super.apiKey, super.baseUrl, super.enabled});
 
   @override
   String get providerId => 'openai';
 
   @override
-  bool get isConfigured => enabled && _apiKey.isNotEmpty;
-
-  Map<String, String> get _headers => {
-        'Authorization': 'Bearer $_apiKey',
-        'content-type': 'application/json',
-      };
+  String get logTag => '[OpenAI]';
 
   @override
-  Future<List<OllamaModel>> listModels() async {
-    if (!isConfigured) {
-      throw OllamaException('[OpenAI] API key not set.');
-    }
-
-    try {
-      final response = await HorizonHttp.client
-          .get(Uri.parse('$_baseUrl/v1/models'), headers: _headers)
-          .timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final data = body['data'] as List<dynamic>? ?? [];
-        final ids = data.map((m) => m['id'] as String).toList();
-        final chatIds = ids.where(_isChatModel).toList()..sort();
-        return chatIds
-            .map((id) => OllamaModel.cloud(
-                  provider: providerId,
-                  id: id,
-                  capabilities: ModelCapabilities(
-                    completion: true,
-                    vision: _isVisionModel(id),
-                    thinking: _isThinkingModel(id),
-                  ),
-                ))
-            .toList();
-      }
-
-      throw OllamaException(
-        '[OpenAI] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body)}',
-      );
-    } on TimeoutException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    } on SocketException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    } on http.ClientException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    }
-  }
+  String get defaultBaseUrl => 'https://api.openai.com';
 
   @override
-  Stream<OllamaMessage> chatStream(
-    List<OllamaMessage> messages, {
-    required OllamaChat chat,
-  }) async* {
-    if (!isConfigured) {
-      throw OllamaException('[OpenAI] API key not set.');
-    }
-
-    final body = <String, dynamic>{
-      'model': chat.model,
-      'messages': await _encodeMessages(messages, chat.systemPrompt),
-      'stream': true,
-    };
-    // o-series reasoning models (o1, o3, o4, etc.) reject `temperature`.
-    if (_acceptsTemperature(chat.model)) {
-      body['temperature'] = chat.options.temperature;
-    }
-    if (chat.options.maxTokens > 0) {
-      body['max_completion_tokens'] = chat.options.maxTokens;
-    }
-    final encodedBody = json.encode(body);
-
-    try {
-      // Retried once on connection-level failures before any bytes arrive;
-      // the request is rebuilt per attempt so a retry is always safe.
-      final response = await HorizonHttp.sendWithRetry(
-        () {
-          final request = http.Request('POST', Uri.parse('$_baseUrl/v1/chat/completions'));
-          request.headers.addAll(_headers);
-          request.body = encodedBody;
-          return request;
-        },
-        timeout: const Duration(seconds: 60),
-      );
-
-      if (response.statusCode != 200) {
-        final text = await response.stream.bytesToString();
-        throw OllamaException(
-          '[OpenAI] ${HttpErrorFormatter.formatHttpError(response.statusCode, body: text)}',
-        );
-      }
-
-      // Stall guard: o-series reasoning gaps can run long, but a dead
-      // connection shouldn't hang "Generating" forever.
-      yield* _parseSse(
-        response.stream.stallGuard(const Duration(seconds: 180), '[OpenAI]'),
-        chat.model,
-      );
-    } on TimeoutException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    } on SocketException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    } on http.ClientException catch (e) {
-      throw OllamaException('[OpenAI] ${HttpErrorFormatter.formatException(e)}');
-    }
+  List<OllamaModel> parseModels(Map<String, dynamic> body) {
+    final data = body['data'] as List<dynamic>? ?? [];
+    final ids = data.map((m) => m['id'] as String).toList();
+    final chatIds = ids.where(_isChatModel).toList()..sort();
+    return chatIds
+        .map((id) => OllamaModel.cloud(
+              provider: providerId,
+              id: id,
+              capabilities: ModelCapabilities(
+                completion: true,
+                vision: _isVisionModel(id),
+                thinking: _isThinkingModel(id),
+                // Every current chat model on the Completions API takes tools;
+                // the list endpoint says nothing about it either way.
+                tools: true,
+              ),
+            ))
+        .toList();
   }
 
-  Stream<OllamaMessage> _parseSse(Stream<List<int>> stream, String model) async* {
-    String buffer = '';
-    await for (final chunk in stream.transform(utf8.decoder)) {
-      buffer += chunk;
-      while (true) {
-        final newlineIdx = buffer.indexOf('\n');
-        if (newlineIdx == -1) break;
-        final line = buffer.substring(0, newlineIdx).trimRight();
-        buffer = buffer.substring(newlineIdx + 1);
-
-        if (!line.startsWith('data:')) continue;
-        final payload = line.substring(5).trim();
-        if (payload.isEmpty) continue;
-        if (payload == '[DONE]') {
-          yield OllamaMessage('', role: OllamaMessageRole.assistant, model: model, done: true);
-          return;
-        }
-
-        try {
-          final event = json.decode(payload) as Map<String, dynamic>;
-          final choices = event['choices'] as List<dynamic>?;
-          if (choices == null || choices.isEmpty) continue;
-          final delta = choices.first['delta'] as Map<String, dynamic>?;
-          final text = delta?['content'] as String?;
-          if (text != null && text.isNotEmpty) {
-            yield OllamaMessage(
-              text,
-              role: OllamaMessageRole.assistant,
-              model: model,
-            );
-          }
-        } on FormatException {
-          continue;
-        }
-      }
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> _encodeMessages(
-    List<OllamaMessage> messages,
-    String? systemPrompt,
-  ) async {
-    final out = <Map<String, dynamic>>[];
-    if (systemPrompt != null && systemPrompt.isNotEmpty) {
-      out.add({'role': 'system', 'content': systemPrompt});
-    }
-
-    for (final m in messages) {
-      if (m.role == OllamaMessageRole.system) continue;
-      final images = await _encodeImagesBase64(m);
-      if (images.isEmpty) {
-        out.add({'role': _roleName(m.role), 'content': m.content});
-      } else {
-        final content = <Map<String, dynamic>>[];
-        if (m.content.isNotEmpty) {
-          content.add({'type': 'text', 'text': m.content});
-        }
-        for (final b64 in images) {
-          content.add({
-            'type': 'image_url',
-            'image_url': {'url': 'data:image/jpeg;base64,$b64'},
-          });
-        }
-        out.add({'role': _roleName(m.role), 'content': content});
-      }
-    }
-    return out;
-  }
-
-  Future<List<String>> _encodeImagesBase64(OllamaMessage m) async {
-    if (m.images == null || m.images!.isEmpty) return const [];
-    final encoded = <String>[];
-    for (final file in m.images!) {
-      try {
-        final bytes = await file.readAsBytes();
-        encoded.add(base64Encode(bytes));
-      } catch (_) {
-        continue;
-      }
-    }
-    return encoded;
-  }
-
-  String _roleName(OllamaMessageRole role) {
-    switch (role) {
-      case OllamaMessageRole.user:
-        return 'user';
-      case OllamaMessageRole.assistant:
-        return 'assistant';
-      case OllamaMessageRole.system:
-        return 'system';
-    }
-  }
-
-  static bool _acceptsTemperature(String model) {
+  /// o-series reasoning models (o1, o3, o4, etc.) reject `temperature`.
+  @override
+  bool acceptsTemperature(String model) {
     final lower = model.toLowerCase();
     if (lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
       return false;

@@ -49,6 +49,26 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
   /// Cache key derived from server address
   String get _cacheKey => Hive.box('settings').get('serverAddress') ?? 'default';
 
+  /// Free-text filter. OpenRouter alone lists several hundred models, so the
+  /// list is unusable without one.
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  /// Models matching [_query], matched against both the id and the subtitle
+  /// (which carries the friendly name and price for OpenRouter models).
+  List<OllamaModel> get _visibleModels {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return _models;
+    // Every whitespace-separated term must appear somewhere, so "claude tool"
+    // narrows rather than widening like an OR would.
+    final terms = query.split(RegExp(r'\s+'));
+    return _models.where((model) {
+      final haystack =
+          '${model.name} ${model.parameterSize} ${model.provider}'.toLowerCase();
+      return terms.every(haystack.contains);
+    }).toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +85,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
   @override
   void dispose() {
     _fetchOperation.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -139,6 +160,30 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
             ],
           ),
           const Divider(),
+          if (_models.length > 12)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'Filter ${_models.length} models',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                        ),
+                ),
+              ),
+            ),
           Expanded(child: _buildBody(context)),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -191,12 +236,17 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
         return const Center(child: Text('No models found.'));
       }
 
+      final visible = _visibleModels;
+      if (visible.isEmpty) {
+        return Center(child: Text('Nothing matches "${_query.trim()}".'));
+      }
+
       return RefreshIndicator(
         onRefresh: () async {
           _fetchOperation = CancelableOperation.fromFuture(_fetchModels());
         },
         child: _GroupedModelList(
-          models: _models,
+          models: visible,
           selectedModel: _selectedModel,
           loadedModels: _loadedModels,
           onSelected: (model) => setState(() => _selectedModel = model),
@@ -223,12 +273,19 @@ class _GroupedModelList extends StatelessWidget {
 
   static const _providerLabels = {
     'ollama': 'Ollama',
+    'openrouter': 'OpenRouter',
     'anthropic': 'Claude',
     'openai': 'OpenAI',
     'google': 'Gemini',
   };
 
-  static const _providerOrder = ['ollama', 'anthropic', 'openai', 'google'];
+  static const _providerOrder = [
+    'ollama',
+    'openrouter',
+    'anthropic',
+    'openai',
+    'google',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -244,33 +301,49 @@ class _GroupedModelList extends StatelessWidget {
         return (ai == -1 ? 999 : ai).compareTo(bi == -1 ? 999 : bi);
       });
 
-    final children = <Widget>[];
+    // Flattened to headers-plus-rows so the list can be built lazily. An
+    // eager ListView(children: ...) instantiates every tile up front, which
+    // with OpenRouter's several hundred models makes opening the sheet visibly
+    // stutter.
+    final items = <Object>[];
     for (final provider in sortedKeys) {
-      final list = grouped[provider]!;
-      if (sortedKeys.length > 1) {
-        children.add(Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            _providerLabels[provider] ?? provider,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-        ));
-      }
-      for (final m in list) {
-        children.add(_ModelListTile(
-          model: m,
-          isSelected: selectedModel == m,
-          isLoaded: m.provider == 'ollama' && loadedModels.contains(m.name),
-          onSelected: onSelected,
-        ));
-      }
+      if (sortedKeys.length > 1) items.add(_ProviderHeader(provider));
+      items.addAll(grouped[provider]!);
     }
 
-    return ListView(children: children);
+    return ListView.builder(
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        if (item is _ProviderHeader) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              _providerLabels[item.provider] ?? item.provider,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+          );
+        }
+        final model = item as OllamaModel;
+        return _ModelListTile(
+          model: model,
+          isSelected: selectedModel == model,
+          isLoaded:
+              model.provider == 'ollama' && loadedModels.contains(model.name),
+          onSelected: onSelected,
+        );
+      },
+    );
   }
+}
+
+/// Marker for a section heading in the flattened model list.
+class _ProviderHeader {
+  final String provider;
+  const _ProviderHeader(this.provider);
 }
 
 class _ModelListTile extends StatelessWidget {
