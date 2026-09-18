@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:uuid/uuid.dart';
 
 class OllamaChat {
@@ -8,8 +9,20 @@ class OllamaChat {
   final String? systemPrompt;
   final OllamaChatOptions options;
 
-  /// Backing provider for this chat: 'ollama' (default), 'anthropic', 'openai'.
+  /// Backing provider for this chat: 'ollama' (default) or 'openrouter'.
   final String provider;
+
+  /// For a chat that predates v4.0.0 and was migrated off a direct cloud
+  /// client, the provider id it used to be bound to ('anthropic', 'openai',
+  /// 'google'). Null for every chat that was never migrated.
+  final String? legacyProvider;
+
+  /// The direct-API model id such a chat was using before migration. Kept
+  /// because the OpenRouter slug it was mapped to is a best-effort guess — if
+  /// it's wrong, this is what the chat actually ran on.
+  final String? legacyModel;
+
+  bool get wasMigrated => legacyProvider != null;
 
   /// Chat this one was branched from, or null if it wasn't. Kept so the UI can
   /// offer a way back to the original — a branch with no visible lineage is
@@ -30,6 +43,8 @@ class OllamaChat {
     String? provider,
     this.parentChatId,
     this.branchPointMessageId,
+    this.legacyProvider,
+    this.legacyModel,
   })  : id = id ?? Uuid().v4(),
         title = title ?? 'New Chat',
         options = options ?? OllamaChatOptions(),
@@ -38,40 +53,29 @@ class OllamaChat {
   factory OllamaChat.fromMap(Map<String, dynamic> map) {
     final model = map['model'] as String? ?? '';
     final storedProvider = map['provider'] as String?;
+
+    // Schema v5 rewrote every stored row off the retired direct clients, so
+    // this normally finds nothing. It still runs on every load because a chat
+    // IMPORTED from a v3 export file never passes through a migration, and
+    // would otherwise arrive bound to a provider the app no longer has.
+    final migrated = OpenRouterMigration.migrate(
+      provider: storedProvider,
+      model: model,
+    );
+
     return OllamaChat(
       id: map['chat_id'],
-      model: model,
+      model: migrated?.model ?? model,
       title: map['chat_title'],
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
-      provider: inferProvider(model, storedProvider),
+      provider: migrated == null ? (storedProvider ?? 'ollama') : 'openrouter',
       parentChatId: map['parent_chat_id'] as String?,
       branchPointMessageId: map['branch_point_message_id'] as String?,
+      legacyProvider:
+          map['legacy_provider'] as String? ?? migrated?.legacyProvider,
+      legacyModel: map['legacy_model'] as String? ?? migrated?.legacyModel,
     );
-  }
-
-  /// Self-healing: if the stored provider doesn't match the model name shape,
-  /// pick the obvious one. Protects against rows written before per-chat
-  /// routing was wired correctly, or with a stale schema.
-  static String inferProvider(String model, String? storedProvider) {
-    // OpenRouter ids are `vendor/model`, so none of the bare-prefix rules
-    // below can match one — but trust the stored value outright rather than
-    // relying on that, since the vendor list grows on OpenRouter's schedule.
-    if (storedProvider == 'openrouter') return 'openrouter';
-
-    final lower = model.toLowerCase();
-    if (lower.startsWith('claude-')) return 'anthropic';
-    if (lower.startsWith('gpt-') || lower.startsWith('o1') ||
-        lower.startsWith('o3') || lower.startsWith('o4') ||
-        lower.startsWith('chatgpt-')) {
-      return 'openai';
-    }
-    if (lower.startsWith('gemini-') ||
-        lower.startsWith('models/gemini-') ||
-        lower.startsWith('gemma-')) {
-      return 'google';
-    }
-    return storedProvider ?? 'ollama';
   }
 }
 
@@ -147,6 +151,14 @@ class OllamaChatOptions {
   /// `options` payload — see [toMap].
   bool tools;
 
+  /// Whether this chat may be found by the assistant's `search_chats` tool.
+  ///
+  /// Off by default and per-chat on purpose: the point of the voice assistant
+  /// knowing about your other conversations is that it can pull in the one
+  /// that matters, and the point of a switch is that it can't read the ones
+  /// that don't. Nothing is injected when this is on — the model has to ask.
+  bool bridge;
+
   /// Whether to ask the model to emit substantial standalone deliverables
   /// (full documents, complete files) wrapped in `<artifact>` tags, which the
   /// client renders as a collapsed card + a dedicated viewer instead of inline
@@ -172,8 +184,10 @@ class OllamaChatOptions {
     this.think,
     bool? tools,
     bool? artifacts,
+    bool? bridge,
   })  : tools = tools ?? true,
         artifacts = artifacts ?? false,
+        bridge = bridge ?? false,
         mirostat = mirostat ?? 0,
         mirostatEta = mirostatEta ?? 0.1,
         mirostatTau = mirostatTau ?? 5.0,
@@ -216,6 +230,7 @@ class OllamaChatOptions {
           ? map['tools'] as bool
           : (map['web_search'] is bool ? map['web_search'] as bool : null),
       artifacts: map['artifacts'] is bool ? map['artifacts'] as bool : null,
+      bridge: map['bridge'] is bool ? map['bridge'] as bool : null,
     );
   }
 
@@ -255,6 +270,7 @@ class OllamaChatOptions {
     // omitting it when false would silently re-enable it on the next load.
     m['tools'] = tools;
     if (artifacts) m['artifacts'] = true;
+    if (bridge) m['bridge'] = true;
     return jsonEncode(m);
   }
 }

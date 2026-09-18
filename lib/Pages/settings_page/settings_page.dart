@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
 
+import 'package:horizon/Pages/settings_page/appearance_settings_page.dart';
+import 'package:horizon/Pages/settings_page/security_audit_page.dart';
 import 'package:horizon/Pages/settings_page/settings_category_page.dart';
 import 'package:horizon/Pages/settings_page/voice_settings_page.dart';
 
@@ -60,7 +62,7 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.cloud_outlined,
           title: 'Cloud Models',
-          subtitle: 'OpenRouter, and direct Anthropic / OpenAI / Google keys',
+          subtitle: 'OpenRouter — one key for every hosted model',
           pageBuilder: _cloudPage,
         ),
         SettingsCategoryTile(
@@ -68,6 +70,12 @@ class _SettingsPageContent extends StatelessWidget {
           title: 'Tools & Web Search',
           subtitle: 'Search backend for the web_search and web_fetch tools',
           pageBuilder: _toolsPage,
+        ),
+        SettingsCategoryTile(
+          icon: Icons.home_outlined,
+          title: 'Home Assistant',
+          subtitle: 'Let the model read sensors and control your house',
+          pageBuilder: _homeAssistantPage,
         ),
         SettingsCategoryTile(
           icon: Icons.graphic_eq,
@@ -79,8 +87,14 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.palette_outlined,
           title: 'Appearance',
-          subtitle: 'Theme and accent colour',
+          subtitle: 'Theme, accent colour, frosted surfaces, shape, text size',
           pageBuilder: _appearancePage,
+        ),
+        SettingsCategoryTile(
+          icon: Icons.shield_outlined,
+          title: 'Security & Privacy',
+          subtitle: 'What leaves this device, where it goes, and what does not',
+          pageBuilder: _securityPage,
         ),
         SettingsCategoryTile(
           icon: Icons.settings_backup_restore,
@@ -91,7 +105,7 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.info_outline,
           title: 'About Horizon',
-          subtitle: 'Version, licences, and links',
+          subtitle: 'Version, licence, source, and credits',
           pageBuilder: _aboutPage,
         ),
       ],
@@ -118,10 +132,15 @@ Widget _toolsPage(BuildContext context) => const SettingsCategoryPage(
 
 Widget _voicePage(BuildContext context) => const VoiceSettingsPage();
 
-Widget _appearancePage(BuildContext context) => const SettingsCategoryPage(
-      title: 'Appearance',
-      children: [ThemesSettings()],
+Widget _homeAssistantPage(BuildContext context) => const SettingsCategoryPage(
+      title: 'Home Assistant',
+      children: [HomeAssistantSettings()],
     );
+
+Widget _securityPage(BuildContext context) => const SecurityAuditPage();
+
+Widget _appearancePage(BuildContext context) =>
+    const AppearanceSettingsPage();
 
 Widget _backupPage(BuildContext context) => const SettingsCategoryPage(
       title: 'Backup & Restore',

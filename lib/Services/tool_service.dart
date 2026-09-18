@@ -5,6 +5,8 @@ import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
 import 'package:horizon/Models/chat_tool.dart';
+import 'package:horizon/Services/chat_history_search.dart';
+import 'package:horizon/Services/home_assistant_service.dart';
 import 'package:horizon/Services/web_search_service.dart';
 import 'package:horizon/Utils/horizon_http.dart';
 
@@ -23,7 +25,18 @@ import 'package:horizon/Utils/horizon_http.dart';
 class ToolService {
   final WebSearchService _webSearch;
 
-  ToolService({required WebSearchService webSearch}) : _webSearch = webSearch;
+  /// Optional because not every configuration has them: chat search needs at
+  /// least one shared conversation, Home Assistant needs a URL and a token.
+  final ChatHistorySearch? _chatSearch;
+  final HomeAssistantService? _homeAssistant;
+
+  ToolService({
+    required WebSearchService webSearch,
+    ChatHistorySearch? chatSearch,
+    HomeAssistantService? homeAssistant,
+  })  : _webSearch = webSearch,
+        _chatSearch = chatSearch,
+        _homeAssistant = homeAssistant;
 
   /// Hard ceiling on a single tool result, in characters. Large enough for a
   /// substantial article, small enough that three or four fetches can't blow
@@ -91,6 +104,118 @@ class ToolService {
     },
   );
 
+  static const ToolDefinition _searchChatsTool = ToolDefinition(
+    name: 'search_chats',
+    description:
+        "Search the user's OTHER conversations in this app for something they "
+        'said or were told before. Use it when the user refers to an earlier '
+        'discussion that is not in this conversation — "what did we decide '
+        'about", "the part number I found", "that recipe" — or when answering '
+        "needs a detail you were clearly told once but can't see now. Only "
+        'conversations the user has shared with the assistant are searchable. '
+        'Returns excerpts with the conversation name and date; say which '
+        'conversation a detail came from.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {
+          'type': 'string',
+          'description':
+              'Distinctive keywords to look for — names, part numbers, '
+              'places, nouns. Every word must appear in a message for it to '
+              'match, so use the specific terms, not a whole sentence.',
+        },
+      },
+      'required': ['query'],
+    },
+  );
+
+  static const ToolDefinition _haListEntitiesTool = ToolDefinition(
+    name: 'ha_list_entities',
+    description:
+        "List the entities in the user's Home Assistant — lights, switches, "
+        'sensors, climate, media players, locks, scenes — with their ids and '
+        'current states. Call this FIRST when asked to control or check '
+        'something in the house: you need the exact entity id, and a guessed '
+        'one fails. Filter by domain or name to keep the list short.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'domain': {
+          'type': 'string',
+          'description':
+              'Optional domain to filter by, e.g. "light", "switch", '
+              '"sensor", "climate", "media_player", "lock", "scene".',
+        },
+        'search': {
+          'type': 'string',
+          'description':
+              'Optional text to match against the entity name or id, e.g. '
+              '"kitchen".',
+        },
+      },
+    },
+  );
+
+  static const ToolDefinition _haGetStateTool = ToolDefinition(
+    name: 'ha_get_state',
+    description:
+        'Read the current state and attributes of one Home Assistant entity '
+        'by its exact id. Use it for a specific reading — a temperature, '
+        'whether a door is open, what is playing.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'entity_id': {
+          'type': 'string',
+          'description':
+              'Exact entity id, e.g. "sensor.kitchen_temperature".',
+        },
+      },
+      'required': ['entity_id'],
+    },
+  );
+
+  static const ToolDefinition _haCallServiceTool = ToolDefinition(
+    name: 'ha_call_service',
+    description:
+        'Call a Home Assistant service to change something: turn a light on '
+        'or off, set a brightness or temperature, activate a scene, lock a '
+        'door, pause media. Confirm the entity id with ha_list_entities '
+        'first. Report what actually changed, and say so plainly if nothing '
+        'did.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'domain': {
+          'type': 'string',
+          'description':
+              "Service domain, usually the entity's own domain — \"light\", "
+              '"switch", "climate", "scene", "lock", "media_player" — or '
+              '"homeassistant" for the generic turn_on/turn_off.',
+        },
+        'service': {
+          'type': 'string',
+          'description':
+              'Service name, e.g. "turn_on", "turn_off", "toggle", '
+              '"set_temperature", "media_pause".',
+        },
+        'entity_id': {
+          'type': 'string',
+          'description':
+              'Entity to act on. Several can be given, separated by commas.',
+        },
+        'data': {
+          'type': 'object',
+          'description':
+              'Extra service parameters, e.g. {"brightness_pct": 40} or '
+              '{"temperature": 21}. Omit when the service needs none.',
+        },
+      },
+      'required': ['domain', 'service'],
+    },
+  );
+
   /// The tools available for the current configuration. Web tools are only
   /// offered when a search backend is actually configured — declaring a tool
   /// we can't run invites the model to call it and then apologise, which reads
@@ -104,6 +229,18 @@ class ToolService {
       // web_fetch needs no search key — a URL the user pasted is fetchable on
       // its own, and it's the more useful half of the pair without a backend.
       tools.insert(0, _webFetchTool);
+    }
+    // Only when a chat is actually shared: a tool whose every answer is
+    // "nothing is shared with me" is worse than no tool at all.
+    if (_chatSearch?.isConfigured == true) {
+      tools.add(_searchChatsTool);
+    }
+    if (_homeAssistant?.isConfigured == true) {
+      tools.addAll(const [
+        _haListEntitiesTool,
+        _haGetStateTool,
+        _haCallServiceTool,
+      ]);
     }
     return tools;
   }
@@ -122,6 +259,25 @@ class ToolService {
         return host.isEmpty ? 'Fetching page…' : 'Reading $host…';
       case 'current_time':
         return 'Checking the time…';
+      case 'search_chats':
+        final q = call.arguments['query']?.toString().trim() ?? '';
+        return q.isEmpty
+            ? 'Searching your chats…'
+            : 'Searching your chats for "$q"…';
+      case 'ha_list_entities':
+        final domain = call.arguments['domain']?.toString().trim() ?? '';
+        return domain.isEmpty
+            ? 'Looking at your home…'
+            : 'Listing your $domain entities…';
+      case 'ha_get_state':
+        final id = call.arguments['entity_id']?.toString().trim() ?? '';
+        return id.isEmpty ? 'Checking your home…' : 'Checking $id…';
+      case 'ha_call_service':
+        final domain = call.arguments['domain']?.toString().trim() ?? '';
+        final service = call.arguments['service']?.toString().trim() ?? '';
+        return domain.isEmpty || service.isEmpty
+            ? 'Controlling your home…'
+            : 'Calling $domain.$service…';
       default:
         return 'Running ${call.name}…';
     }
@@ -131,7 +287,10 @@ class ToolService {
   // Execution
   // ============================================================
 
-  Future<ToolResult> execute(ToolCall call) async {
+  /// [currentChatId] is excluded from `search_chats`: the model can already
+  /// see the conversation it's in, and matching it would spend the result
+  /// budget on text that's in the prompt anyway.
+  Future<ToolResult> execute(ToolCall call, {String? currentChatId}) async {
     try {
       switch (call.name) {
         case 'web_search':
@@ -140,12 +299,24 @@ class ToolService {
           return await _runWebFetch(call.arguments);
         case 'current_time':
           return _runCurrentTime();
+        case 'search_chats':
+          return await _runSearchChats(call.arguments, currentChatId);
+        case 'ha_list_entities':
+          return await _runHaListEntities(call.arguments);
+        case 'ha_get_state':
+          return await _runHaGetState(call.arguments);
+        case 'ha_call_service':
+          return await _runHaCallService(call.arguments);
         default:
           return ToolResult.error(
             'No tool named "${call.name}" exists. Available tools: '
             '${availableTools().map((t) => t.name).join(', ')}.',
           );
       }
+    } on HomeAssistantException catch (e) {
+      // Already phrased for the model — a URL or token problem it should
+      // report to the user rather than retry.
+      return ToolResult.error(e.message);
     } on TimeoutException {
       return ToolResult.error(
         '${call.name} timed out. The site may be slow or unreachable — try a '
@@ -266,6 +437,144 @@ class ToolService {
     return RegExp(r'^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
             r'(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$')
         .hasMatch(host);
+  }
+
+  Future<ToolResult> _runSearchChats(
+    Map<String, dynamic> args,
+    String? currentChatId,
+  ) async {
+    final search = _chatSearch;
+    if (search == null || !search.isConfigured) {
+      return ToolResult.error(
+        'No conversations are shared with the assistant. Tell the user they '
+        "can share one from that chat's Configure Chat sheet, under "
+        '"Share with assistant".',
+      );
+    }
+
+    final query = _stringArg(args, const ['query', 'q', 'search', 'value']);
+    if (query == null) {
+      return ToolResult.error(
+        'search_chats needs a "query" argument holding the keywords to look '
+        'for.',
+      );
+    }
+
+    final formatted = await search.searchFormatted(
+      query,
+      excludeChatId: currentChatId,
+    );
+    if (formatted == null) {
+      return ToolResult(
+        'Nothing to search: "$query" held no distinctive keywords, or no '
+        'other conversation is shared.',
+      );
+    }
+    return ToolResult(_truncate(formatted));
+  }
+
+  Future<ToolResult> _runHaListEntities(Map<String, dynamic> args) async {
+    final domain = _stringArg(args, const ['domain', 'type'])?.toLowerCase();
+    final search =
+        _stringArg(args, const ['search', 'query', 'name'])?.toLowerCase();
+
+    var entities = await _homeAssistant!.states();
+    if (domain != null) {
+      entities = entities.where((e) => e.domain == domain).toList();
+    }
+    if (search != null) {
+      entities = entities
+          .where((e) =>
+              e.friendlyName.toLowerCase().contains(search) ||
+              e.entityId.toLowerCase().contains(search))
+          .toList();
+    }
+
+    if (entities.isEmpty) {
+      return ToolResult(
+        'No Home Assistant entities match that. Call ha_list_entities with no '
+        'arguments to see what exists.',
+      );
+    }
+
+    // Grouped by domain: an unfiltered instance runs to hundreds of entities,
+    // and a flat alphabetical wall is much harder to pick from.
+    final grouped = <String, List<HaEntity>>{};
+    for (final entity in entities) {
+      grouped.putIfAbsent(entity.domain, () => []).add(entity);
+    }
+    final buffer = StringBuffer(
+      '${entities.length} Home Assistant '
+      'entit${entities.length == 1 ? 'y' : 'ies'}:\n',
+    );
+    for (final domainKey in grouped.keys.toList()..sort()) {
+      buffer.writeln();
+      buffer.writeln('## $domainKey');
+      for (final entity in grouped[domainKey]!) {
+        buffer.writeln('- ${entity.summary}');
+      }
+    }
+    return ToolResult(_truncate(buffer.toString()));
+  }
+
+  Future<ToolResult> _runHaGetState(Map<String, dynamic> args) async {
+    final id = _stringArg(args, const ['entity_id', 'entity', 'id']);
+    if (id == null) {
+      return ToolResult.error(
+        'ha_get_state needs an "entity_id", e.g. {"entity_id": '
+        '"light.kitchen"}. Use ha_list_entities to find the exact id.',
+      );
+    }
+
+    final entity = await _homeAssistant!.state(id);
+    final buffer = StringBuffer(entity.summary);
+    if (entity.attributes.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Attributes: ${json.encode(entity.attributes)}');
+    }
+    return ToolResult(_truncate(buffer.toString()));
+  }
+
+  Future<ToolResult> _runHaCallService(Map<String, dynamic> args) async {
+    final domain = _stringArg(args, const ['domain']);
+    final service = _stringArg(args, const ['service', 'action']);
+    if (domain == null || service == null) {
+      return ToolResult.error(
+        'ha_call_service needs "domain" and "service", e.g. {"domain": '
+        '"light", "service": "turn_on", "entity_id": "light.kitchen"}.',
+      );
+    }
+
+    // Models put the extra parameters either inside `data` or alongside it,
+    // and both are reasonable readings of the schema, so accept both.
+    final data = <String, dynamic>{};
+    final nested = args['data'];
+    if (nested is Map) data.addAll(nested.cast<String, dynamic>());
+    for (final entry in args.entries) {
+      if (const ['domain', 'service', 'action', 'data'].contains(entry.key)) {
+        continue;
+      }
+      data[entry.key] = entry.value;
+    }
+
+    final changed = await _homeAssistant!.callService(
+      domain: domain,
+      service: service,
+      data: data,
+    );
+
+    if (changed.isEmpty) {
+      return ToolResult(
+        'Called $domain.$service, and Home Assistant reported no state '
+        'change. Either it was already in that state or the entity id was '
+        'wrong — check with ha_get_state before telling the user it worked.',
+      );
+    }
+    final buffer = StringBuffer('Called $domain.$service. Now:\n');
+    for (final entity in changed) {
+      buffer.writeln('- ${entity.summary}');
+    }
+    return ToolResult(_truncate(buffer.toString()));
   }
 
   ToolResult _runCurrentTime() {

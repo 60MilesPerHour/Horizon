@@ -14,6 +14,7 @@ import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_export_service.dart';
+import 'package:horizon/Services/chat_history_search.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Services/database_service.dart';
 import 'package:horizon/Services/generation_keepalive.dart';
@@ -26,6 +27,7 @@ class ChatProvider extends ChangeNotifier {
   final DatabaseService _databaseService;
   final WebSearchService _webSearch;
   final ToolService _toolService;
+  final ChatHistorySearch? _chatHistorySearch;
 
   /// Cap on tool round-trips within a single user turn. A model that keeps
   /// searching instead of answering would otherwise loop until the user's
@@ -100,10 +102,17 @@ class ChatProvider extends ChangeNotifier {
     required DatabaseService databaseService,
     required WebSearchService webSearch,
     required ToolService toolService,
+    ChatHistorySearch? chatHistorySearch,
   })  : _registry = registry,
         _databaseService = databaseService,
         _webSearch = webSearch,
-        _toolService = toolService {
+        _toolService = toolService,
+        _chatHistorySearch = chatHistorySearch {
+    // The `search_chats` tool reads the chat list through this callback rather
+    // than being handed a copy: a copy would go stale the moment a chat's
+    // "share with assistant" switch was flipped, and the tool would then
+    // either miss a shared chat or search one that had been unshared.
+    _chatHistorySearch?.chatsSource = () => _chats;
     _initialize();
   }
 
@@ -173,6 +182,47 @@ class ChatProvider extends ChangeNotifier {
 
   /// Hive key holding the id of the chat voice mode talks to.
   static const String assistantChatIdKey = 'assistant_chat_id';
+
+  /// Id of the chat voice mode talks to, or null before first use.
+  String? get assistantChatId =>
+      Hive.box('settings').get(assistantChatIdKey) as String?;
+
+  bool isAssistantChat(OllamaChat chat) => chat.id == assistantChatId;
+
+  /// How many messages of the assistant chat are actually sent to the model.
+  ///
+  /// Voice mode deliberately reuses one long-lived chat so it remembers the
+  /// last thing it was asked, and nobody ever deletes it — which means that
+  /// without a cap it grows forever, and every "what's the time" eventually
+  /// re-sends months of conversation. Trimming what's SENT rather than what's
+  /// stored: the transcript stays complete and readable in the sidebar.
+  ///
+  /// 24 messages is roughly a dozen exchanges — far more than a voice
+  /// conversation refers back to, and small enough that the oldest turn can't
+  /// dominate the bill.
+  static const int assistantContextMessages = 24;
+
+  /// Keeps roughly the last [assistantContextMessages] messages, always
+  /// starting at a user turn.
+  ///
+  /// Starting at a user turn is not cosmetic: a tool result has to follow the
+  /// assistant message that requested it, and every OpenAI-compatible
+  /// endpoint rejects a transcript that opens with an orphaned one. So the cut
+  /// moves BACKWARD from the window edge to the nearest user message, never
+  /// forward — erring towards sending a little more history is free, while
+  /// erring towards a shorter-but-invalid transcript fails the whole turn.
+  static List<OllamaMessage> trimAssistantHistory(
+    List<OllamaMessage> messages, {
+    int keep = assistantContextMessages,
+  }) {
+    if (messages.length <= keep) return messages;
+
+    var cut = messages.length - keep;
+    while (cut > 0 && messages[cut].role != OllamaMessageRole.user) {
+      cut--;
+    }
+    return messages.sublist(cut);
+  }
 
   /// Selects an existing chat by id, loading its messages. Returns false when
   /// the chat is gone — the caller decides whether to make a new one.
@@ -570,7 +620,10 @@ class ChatProvider extends ChangeNotifier {
         _toolActivity[associatedChat.id] = _toolService.labelFor(call);
         notifyListeners();
 
-        final result = await _toolService.execute(call);
+        final result = await _toolService.execute(
+          call,
+          currentChatId: associatedChat.id,
+        );
         final message = OllamaMessage.toolResult(call: call, result: result);
         results.add(message);
         await _databaseService.addMessage(message, chat: associatedChat);
@@ -835,7 +888,10 @@ class ChatProvider extends ChangeNotifier {
   Future<(List<OllamaMessage>, OllamaChat, List<ToolDefinition>)> _prepareSend(
     OllamaChat chat,
   ) async {
-    var outgoing = _messages;
+    // The assistant chat is the one nobody prunes, so it's the one that needs
+    // a ceiling on what gets sent. Every other chat is sent in full.
+    var outgoing =
+        isAssistantChat(chat) ? trimAssistantHistory(_messages) : _messages;
     var systemAddon = '';
     var tools = const <ToolDefinition>[];
 
@@ -855,7 +911,7 @@ class ChatProvider extends ChangeNotifier {
           context = null; // best-effort; fall back to a normal send
         }
         if (context != null) {
-          outgoing = _appendToLastUser(_messages, context);
+          outgoing = _appendToLastUser(outgoing, context);
         }
       }
     }

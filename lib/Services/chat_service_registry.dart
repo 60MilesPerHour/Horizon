@@ -1,44 +1,32 @@
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_model.dart';
+import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:horizon/Services/chat_service.dart';
-import 'package:horizon/Services/claude_service.dart';
-import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
-import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 
 /// Routes chat operations to the right backend based on `chat.provider`.
 ///
-/// `openrouter` is the recommended cloud backend — one key for every hosted
-/// model. The three direct clients (`anthropic`, `openai`, `google`) remain
-/// so chats created against them keep working and so a user with an existing
-/// key can still talk to those APIs without a middleman; all three ship
-/// disabled by default.
+/// Two backends: Ollama for local models, OpenRouter for everything hosted.
+/// Horizon also spoke Anthropic, OpenAI and Google natively until v4.0.0 —
+/// three keys, three request dialects, three tool protocols, and capability
+/// support that had to be guessed from model names. OpenRouter serves the same
+/// models behind one key and reports what each can do, so the direct clients
+/// were removed and existing chats migrated onto it; see
+/// [OpenRouterMigration].
 class ChatServiceRegistry {
   final OllamaService ollama;
   final OpenRouterService openrouter;
-  final ClaudeService claude;
-  final OpenAIService openai;
-  final GeminiService gemini;
 
   ChatServiceRegistry({
     required this.ollama,
     required this.openrouter,
-    required this.claude,
-    required this.openai,
-    required this.gemini,
   });
 
   ChatService resolve(String provider) {
     switch (provider) {
       case 'openrouter':
         return openrouter;
-      case 'anthropic':
-        return claude;
-      case 'openai':
-        return openai;
-      case 'google':
-        return gemini;
       case 'ollama':
       default:
         return ollama;
@@ -47,7 +35,7 @@ class ChatServiceRegistry {
 
   ChatService forChat(OllamaChat chat) => resolve(chat.provider);
 
-  List<ChatService> get all => [ollama, openrouter, claude, openai, gemini];
+  List<ChatService> get all => [ollama, openrouter];
 
   /// Fetch models from every configured provider. Per-provider failures are
   /// tolerated so one bad key doesn't hide the rest — but if EVERY provider

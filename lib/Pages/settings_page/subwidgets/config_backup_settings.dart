@@ -8,10 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:horizon/Services/config_backup_service.dart';
-import 'package:horizon/Services/claude_service.dart';
-import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
-import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 
 /// Export / import of API keys and server settings, so a fresh install (or a
@@ -86,9 +83,6 @@ class ConfigBackupSettings extends StatelessWidget {
     // Capture the live services before any await so we don't touch a stale
     // context after the file picker / async writes.
     final openrouter = context.read<OpenRouterService>();
-    final claude = context.read<ClaudeService>();
-    final openai = context.read<OpenAIService>();
-    final gemini = context.read<GeminiService>();
     final ollama = context.read<OllamaService>();
 
     final result = await FilePicker.platform.pickFiles(
@@ -132,19 +126,9 @@ class ConfigBackupSettings extends StatelessWidget {
         // restore, so turn it on when there's a key to use.
         if (key.isNotEmpty) openrouter.enabled = true;
       }
-      if (p.containsKey('anthropic_api_key')) {
-        claude.apiKey = p['anthropic_api_key']!;
-      }
-      if (p.containsKey('openai_api_key')) {
-        openai.apiKey = p['openai_api_key']!;
-      }
-      if (p.containsKey('openai_base_url')) {
-        final base = p['openai_base_url']!;
-        openai.baseUrl = base.isEmpty ? null : base;
-      }
-      if (p.containsKey('google_api_key')) {
-        gemini.apiKey = p['google_api_key']!;
-      }
+      // A backup written by v3.x also carries anthropic/openai/google keys.
+      // They're ignored rather than restored: nothing reads them since the
+      // direct clients were removed in v4.0.0.
       if (p.containsKey('ollama_api_token')) {
         ollama.apiToken = p['ollama_api_token']!;
       }

@@ -11,10 +11,14 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-/// Verifies the v2 → v3 upgrade against a database built with the *old*
-/// schema, which is the only shape that matters: every existing install is
-/// v2, and v3 widens a CHECK constraint, which SQLite can only do by
-/// rebuilding the table. Getting that wrong loses every message a user has.
+/// Verifies the upgrade path against databases built with the *old* schemas,
+/// which are the only shapes that matter.
+///
+/// v2 → v3 widens a CHECK constraint, which SQLite can only do by rebuilding
+/// the messages table; getting that wrong loses every message a user has.
+/// v4 → v5 retires the direct cloud clients and rewrites every chat bound to
+/// one, so getting that wrong leaves a chat pointing at a provider the app no
+/// longer contains — it would load and then refuse to send.
 void main() async {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
@@ -23,6 +27,7 @@ void main() async {
   await PathManager.initialize();
 
   const fileName = 'migration_test.db';
+  const v4FileName = 'migration_v4_test.db';
   // Must match DatabaseService.getDatabasesPathForPlatform exactly, or the
   // service opens a different (empty) file and the migration appears to work
   // while testing nothing.
@@ -30,6 +35,7 @@ void main() async {
       ? PathManager.instance.documentsDirectory.path
       : await getDatabasesPath();
   final databasePath = path.join(databaseDirectory, fileName);
+  final v4DatabasePath = path.join(databaseDirectory, v4FileName);
 
   /// Creates a database exactly as v3.7.5 and earlier left it.
   Future<void> createV2Database() async {
@@ -168,6 +174,146 @@ END;''');
     expect(toolResult.toolName, 'web_search');
     expect(toolResult.toolFailed, isFalse);
     expect(toolResult.content, contains('on-device models'));
+
+    await service.close();
+  });
+
+  /// Creates a database exactly as v3.13.x left it: schema v4, with chats
+  /// bound to the three direct cloud clients that v4.0.0 removed.
+  Future<void> createV4Database() async {
+    await databaseFactoryFfi.deleteDatabase(v4DatabasePath);
+    final db = await openDatabase(
+      v4DatabasePath,
+      version: 4,
+      onCreate: (db, version) async {
+        await db.execute('''CREATE TABLE IF NOT EXISTS chats (
+chat_id TEXT PRIMARY KEY,
+model TEXT NOT NULL,
+chat_title TEXT NOT NULL,
+system_prompt TEXT,
+options TEXT,
+provider TEXT NOT NULL DEFAULT 'ollama',
+parent_chat_id TEXT,
+branch_point_message_id TEXT
+) WITHOUT ROWID;''');
+        await db.execute('''CREATE TABLE IF NOT EXISTS messages (
+message_id TEXT PRIMARY KEY,
+chat_id TEXT NOT NULL,
+content TEXT NOT NULL,
+images TEXT,
+attachments TEXT,
+tool_calls TEXT,
+tool_call_id TEXT,
+tool_name TEXT,
+tool_failed INTEGER NOT NULL DEFAULT 0,
+role TEXT CHECK(role IN ('user', 'assistant', 'system', 'tool')) NOT NULL,
+timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+FOREIGN KEY (chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE
+) WITHOUT ROWID;''');
+        await db.execute('''CREATE TABLE IF NOT EXISTS cleanup_jobs (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+image_paths TEXT,
+attachment_paths TEXT
+)''');
+      },
+    );
+
+    const rows = [
+      ['claude-chat', 'claude-sonnet-4-5-20250929', 'anthropic'],
+      ['gpt-chat', 'gpt-4o', 'openai'],
+      ['gemini-chat', 'gemini-1.5-pro', 'google'],
+      ['local-chat', 'qwen3.6:27b', 'ollama'],
+      ['router-chat', 'z-ai/glm-4.6', 'openrouter'],
+    ];
+    for (final row in rows) {
+      await db.insert('chats', {
+        'chat_id': row[0],
+        'model': row[1],
+        'chat_title': row[0],
+        'system_prompt': null,
+        'options': '{"temperature":0.8}',
+        'provider': row[2],
+      });
+      await db.insert('messages', {
+        'message_id': 'msg-${row[0]}',
+        'chat_id': row[0],
+        'content': 'a message in ${row[0]}',
+        'role': 'user',
+        'tool_failed': 0,
+        'timestamp': 1700000000000,
+      });
+    }
+    await db.close();
+  }
+
+  test('v4 chats on the direct clients move to OpenRouter', () async {
+    await createV4Database();
+
+    final service = DatabaseService();
+    await service.open(v4FileName);
+
+    final chats = {
+      for (final chat in await service.getAllChats()) chat.id: chat,
+    };
+    expect(chats.length, 5);
+
+    // Every retired provider is gone, with the model rewritten to its slug.
+    expect(chats['claude-chat']!.provider, 'openrouter');
+    expect(chats['claude-chat']!.model, 'anthropic/claude-sonnet-4.5');
+    expect(chats['gpt-chat']!.model, 'openai/gpt-4o');
+    expect(chats['gemini-chat']!.model, 'google/gemini-pro-1.5');
+
+    // And what each one used to be is still on the row.
+    expect(chats['claude-chat']!.legacyProvider, 'anthropic');
+    expect(
+      chats['claude-chat']!.legacyModel,
+      'claude-sonnet-4-5-20250929',
+    );
+
+    // The two providers that survive are untouched.
+    expect(chats['local-chat']!.provider, 'ollama');
+    expect(chats['local-chat']!.model, 'qwen3.6:27b');
+    expect(chats['local-chat']!.wasMigrated, isFalse);
+    expect(chats['router-chat']!.model, 'z-ai/glm-4.6');
+    expect(chats['router-chat']!.wasMigrated, isFalse);
+
+    await service.close();
+  });
+
+  test('migrated chats keep their messages', () async {
+    await createV4Database();
+
+    final service = DatabaseService();
+    await service.open(v4FileName);
+
+    // The v5 step only UPDATEs chats, but it's the first migration to run
+    // after branching shipped, so prove nothing cascaded.
+    expect(
+      (await service.getMessages('claude-chat')).single.content,
+      'a message in claude-chat',
+    );
+    expect((await service.getMessages('local-chat')).length, 1);
+
+    await service.close();
+  });
+
+  test('a branch of a migrated chat inherits the record of its origin',
+      () async {
+    await createV4Database();
+
+    final service = DatabaseService();
+    await service.open(v4FileName);
+
+    final source = (await service.getAllChats())
+        .firstWhere((chat) => chat.id == 'claude-chat');
+    final branch = await service.branchChat(
+      source,
+      throughMessageId: (await service.getMessages(source.id)).single.id,
+    );
+
+    expect(branch.provider, 'openrouter');
+    expect(branch.legacyProvider, 'anthropic');
+    expect(branch.legacyModel, 'claude-sonnet-4-5-20250929');
 
     await service.close();
   });

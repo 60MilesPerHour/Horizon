@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_message.dart';
+import 'package:horizon/Services/appearance_controller.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'chat_bubble_actions.dart';
@@ -142,8 +144,17 @@ class _ChatBubbleBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final appearance = context.watch<AppearanceController>().appearance;
+    final bubbled = appearance.userBubbles;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 25.0, vertical: 15.0),
+      padding: EdgeInsets.symmetric(
+        horizontal: 25.0,
+        // Compact density tightens the gap between turns as well as the
+        // controls; a transcript-style chat with 15px of air per turn reads as
+        // very sparse.
+        vertical: appearance.compact ? 8.0 : 15.0,
+      ),
       child: Column(
         spacing: 8,
         crossAxisAlignment: bubbleAlignment,
@@ -172,17 +183,21 @@ class _ChatBubbleBody extends StatelessWidget {
           // Mixed turn: the calls it made, then what it said.
           if (message.hasToolCalls) ChatBubbleToolCard(message: message),
           Container(
-            padding: isSentFromUser ? const EdgeInsets.all(10.0) : null,
+            // Appearance → "Bubble your messages" off drops the fill and the
+            // padding, so the user's turn reads as a transcript line rather
+            // than a chat bubble. The assistant's side was never filled.
+            padding:
+                isSentFromUser && bubbled ? const EdgeInsets.all(10.0) : null,
             constraints: BoxConstraints(
               maxWidth: isSentFromUser
                   ? MediaQuery.of(context).size.width * 0.8
                   : double.infinity,
             ),
             decoration: BoxDecoration(
-              color: isSentFromUser
+              color: isSentFromUser && bubbled
                   ? Theme.of(context).colorScheme.primaryContainer
                   : Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(10.0),
+              borderRadius: BorderRadius.circular(appearance.cornerRadius),
             ),
             child: streamingContent != null
                 ? _StreamingText(notifier: streamingContent!)

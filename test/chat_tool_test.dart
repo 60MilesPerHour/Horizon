@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:horizon/Models/chat_tool.dart';
 import 'package:horizon/Models/ollama_message.dart';
-import 'package:horizon/Services/openai_service.dart';
+import 'package:horizon/Services/openrouter_service.dart';
 import 'package:horizon/Services/tool_service.dart';
 import 'package:horizon/Services/web_search_service.dart';
 
@@ -68,27 +68,18 @@ void main() {
       expect(json['function']['parameters']['type'], 'object');
     });
 
-    test('Anthropic shape uses input_schema', () {
-      final json = tool.toAnthropicJson();
-      expect(json['name'], 'web_search');
-      expect(json['input_schema']['required'], ['query']);
-      expect(json.containsKey('parameters'), isFalse);
-    });
-
-    test('Gemini shape strips keys its schema dialect rejects', () {
-      final json = tool.toGeminiJson();
-      final params = json['parameters'] as Map<String, dynamic>;
-      expect(params.containsKey('additionalProperties'), isFalse);
-      final query = (params['properties'] as Map)['query'] as Map;
-      expect(query.containsKey('default'), isFalse);
-      // The parts Gemini does understand must survive.
-      expect(params['type'], 'object');
+    test('the schema is passed through verbatim', () {
+      // No dialect filtering any more: the Gemini sanitiser went with the
+      // direct clients in v4.0.0, and OpenRouter takes JSON Schema as-is.
+      final params =
+          tool.toOpenAiJson()['function']['parameters'] as Map<String, dynamic>;
+      expect(params['additionalProperties'], isFalse);
       expect(params['required'], ['query']);
     });
   });
 
   group('OpenAI-compatible SSE tool-call reassembly', () {
-    final service = OpenAIService(apiKey: 'test', enabled: true);
+    final service = OpenRouterService(apiKey: 'test', enabled: true);
 
     test('stitches arguments split across many deltas', () async {
       final messages = await service
@@ -264,7 +255,7 @@ void main() {
   });
 
   group('OpenAI-compatible transcript encoding', () {
-    final service = OpenAIService(apiKey: 'test', enabled: true);
+    final service = OpenRouterService(apiKey: 'test', enabled: true);
 
     test('replays tool calls and results in the protocol shape', () async {
       final call = ToolCall(

@@ -5,7 +5,7 @@
 # Horizon
 
 **A multi-provider AI chat client built on Flutter.**
-Talk to **Ollama**, **Claude**, **OpenAI**, and **Gemini** from a single app — with per-conversation configs, secure on-device key storage, and an OLED-optimized dark theme.
+Talk to a local **Ollama** server and to every hosted model on **OpenRouter** — Claude, GPT, Gemini, Llama, Qwen and several hundred more — from a single app, with per-conversation configs, secure on-device key storage, and an OLED-optimized dark theme.
 
 [**Download latest release ▸**](https://github.com/60MilesPerHour/Horizon/releases)
 
@@ -15,16 +15,21 @@ Talk to **Ollama**, **Claude**, **OpenAI**, and **Gemini** from a single app —
 
 ## Highlights
 
-- **Four providers, one app.** Ollama (local + Ollama Cloud), Claude (Anthropic), OpenAI (incl. o-series reasoning), Gemini (Google). Mix providers freely across chats — or even mid-chat.
+- **Local and hosted, one app.** Ollama (local + Ollama Cloud) for anything on your own hardware; OpenRouter for everything else, on one key and one bill. Mix them freely across chats — or even mid-chat. Horizon spoke to Anthropic, OpenAI and Google directly until v4.0.0; OpenRouter serves the same models behind one protocol and, unlike those endpoints, reports per-model capabilities, so the picker can show what each model actually supports instead of guessing from its name.
 - **Per-conversation everything.** Model, provider, system prompt, temperature, context size, max tokens — all stored per chat. No global toggles to babysit.
 - **Live model + provider switching.** Switch from a local Llama to Claude Sonnet mid-thread without losing history.
+- **Chat branching.** Fork a conversation at any message and explore a different path without losing the original.
+- **Home Assistant control.** Point Horizon at your HA instance and the model can read sensors and call services — "is the garage shut", "set the office to 20", "run the movie scene". Entity ids are looked up, never guessed.
+- **Cross-chat memory, per chat.** Share a conversation with the assistant and any other chat — including voice mode — can search it when it needs something you worked out there. Off by default, opt in per chat, and the model has to ask: nothing is injected into a prompt behind your back.
+- **A security page that reads your config, not a promise.** Settings → Security & Privacy lists every destination data can leave for, what exactly goes there, whether it's happening right now, and where each credential lives — grouped into on-device, your own hardware, and third parties. It's blunt about the awkward parts: that OpenRouter forwards your conversation to whoever serves the model, that Android's speech recogniser may ship your audio to Google, and that the config backup is plaintext by design.
+- **Appearance, properly.** Light/dark/system, any accent colour, five palette styles, true-black or dim dark mode, frosted translucent chrome, corner radius, text size and density — with a live preview.
 - **Self-hosted-friendly Ollama setup.** Configure a *primary* and a *backup* server URL. Requests fail over automatically when the primary is unreachable — keep your home-LAN address private and let traffic transparently route through your VPN/Tailscale endpoint when you're off-network.
 - **Ollama Cloud + bearer auth.** Optional Authorization token for Ollama Cloud (ollama.com) or any reverse-proxy that gates a self-hosted Ollama behind auth.
 - **Per-chat thinking toggle.** Three-state `think` control (Default / On / Off) for Ollama models with a thinking phase (Qwen 3, gpt-oss, etc.). Models without one ignore it.
 - **Secure key storage.** Cloud-provider API keys live in the OS keystore via `flutter_secure_storage` — never in plaintext settings or app data.
 - **Smooth streaming.** Typewriter buffer plus plain-text rendering during the stream means responses don't turn into a slideshow as they grow. Markdown renders cleanly once the response completes (code blocks, GFM tables, the works).
-- **OLED true-black dark theme.** Free AMOLED battery, pleasant at night.
-- **Image input** on every vision-capable model — Ollama vision, Claude, GPT-4o, Gemini.
+- **OLED true-black dark theme.** Free AMOLED battery, pleasant at night — or Dim, if you're on an LCD.
+- **Image input** on every vision-capable model, with support read from OpenRouter per model rather than inferred.
 - **Edit & regenerate.** Edit any of your past messages and regenerate the assistant's response from there.
 - **Custom Ollama models.** Save your favourite prompt + config combo as a fresh Ollama model — Horizon calls `/api/create` for you.
 - **Responsive layout.** Same Flutter codebase tuned for phone, tablet, and desktop.
@@ -43,8 +48,9 @@ Talk to **Ollama**, **Claude**, **OpenAI**, and **Gemini** from a single app —
 ## Configure
 
 1. **Ollama** — Settings → Server → enter `http://<host>:11434`. Optionally enter a backup URL (Tailscale, VPN, etc.) — used automatically when the primary can't be reached. For **Ollama Cloud**, set the primary to `https://ollama.com` and paste your `olc-...` token in the API Token field below.
-2. **Cloud providers** — Settings → Cloud Providers → paste API keys for Anthropic, OpenAI, and/or Google. Models from every configured provider show up in the model picker, grouped by provider.
-3. **Per-chat thinking** (Ollama) — Configure Chat → Thinking → Default / On / Off. Leave at Default unless you need to force a thinking-capable model on or off.
+2. **Cloud models** — Settings → Cloud Models → paste your OpenRouter key (`sk-or-v1-...`). It enables itself as soon as a key is present, and every model OpenRouter serves shows up in the picker with its price per million tokens.
+3. **Home Assistant** (optional) — Settings → Home Assistant → instance URL plus a long-lived access token from your HA profile → Security. "Test connection" tells you which of the two is wrong. The token is unscoped, because HA has no finer-grained scope for long-lived tokens: the model can do anything it can.
+4. **Per-chat thinking** (Ollama) — Configure Chat → Thinking → Default / On / Off. Leave at Default unless you need to force a thinking-capable model on or off.
 
 That's it.
 
@@ -54,7 +60,7 @@ Horizon is a fork of [Reins](https://github.com/ibrahimcetin/reins) — a clean 
 
 | Area | Reins (1.2.0) | Horizon (3.3.0) |
 |---|---|---|
-| Backends | Ollama only | Ollama (local + Cloud) + Claude + OpenAI + Gemini |
+| Backends | Ollama only | Ollama (local + Cloud) + OpenRouter (Claude, GPT, Gemini, Llama, Qwen, …) |
 | Server reachability | Single URL | Primary + backup URL with automatic failover |
 | Authenticated Ollama | n/a | Optional bearer token for Ollama Cloud / proxied servers |
 | Per-chat `think` toggle | n/a | Three-state Default/On/Off |

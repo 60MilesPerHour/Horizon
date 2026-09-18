@@ -32,6 +32,91 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.0.0 — 2026-09-18
+
+One cloud backend instead of four, a settings section that can answer "where
+does my data go", and the assistant can now reach both your other
+conversations and your house.
+
+**Breaking — the direct Anthropic, OpenAI and Google clients are gone.**
+Horizon spoke those three APIs natively: three keys, three request dialects,
+three tool protocols, and per-model capabilities that had to be guessed from
+model names. OpenRouter serves the same models behind one key and one protocol
+and reports what each model actually supports. So the three clients were
+deleted, and a database migration (schema v5) repointed every chat that used
+one at OpenRouter, rewriting its model id to the equivalent slug
+(`claude-sonnet-4-5-20250929` becomes `anthropic/claude-sonnet-4.5`). A slug is
+a best-effort mapping, so the original provider and model id are kept on the
+row rather than discarded: if a chat lands on a model that doesn't exist, what
+it used to run on is still recorded. The same mapping runs when a chat is
+imported, since an export file written by v3 never passes through a migration.
+
+Two things this does *not* do: your `anthropic_api_key`, `openai_api_key` and
+`google_api_key` stay in the OS keystore untouched — nothing reads them, but
+silently deleting a credential isn't the app's call — and the "OpenAI Base URL"
+field that let Horizon talk to an arbitrary OpenAI-compatible endpoint went
+with the OpenAI client.
+
+- **Security & Privacy.** A new settings page listing every destination data
+  can leave for, grouped into on-device, your own hardware, and third parties.
+  Each row says what exactly goes there, whether it's happening right now, and
+  where the credential lives. It's read from your live configuration rather
+  than written by hand, and it's deliberately blunt where "private" is weaker
+  than it sounds: that OpenRouter forwards your conversation to whoever serves
+  the model, that Android's speech recogniser ships your audio to Google unless
+  an offline language pack is installed, that `ollama.com` is not your own
+  hardware, that an Ollama address outside your LAN means traffic leaving your
+  network, and that the config backup is plaintext by design. It reads whether
+  a key exists, never its value, so a screenshot of the page can't leak one.
+
+- **Home Assistant.** Point Horizon at your instance with a long-lived token
+  and the model can list entities, read one's state, and call services — check
+  a sensor, turn something on, set a temperature, run a scene. It looks entity
+  ids up rather than guessing them, and reports what actually changed instead
+  of assuming a 200 meant something happened. "Test connection" tells you
+  which of the URL and the token is wrong, in Settings, rather than mid-
+  sentence in a voice conversation. The token is unscoped because Home
+  Assistant has no scopes for long-lived tokens; the page says so.
+
+- **Conversations can be shared with the assistant.** Turn on "Share with
+  assistant" in a chat's Configure Chat sheet and any other chat — voice mode
+  included — can search it with a new `search_chats` tool when it needs
+  something you worked out there. Off by default and per chat: the useful
+  version of this is the one where the assistant can reach the conversation
+  that matters and cannot reach the ones that don't. Nothing is injected into
+  a prompt behind your back — the model has to ask, the search runs locally,
+  and it only ever gets matching excerpts with the conversation name and date.
+  The tool isn't even offered to a model until at least one chat is shared.
+
+- **Appearance, properly.** Light / dark / system as a labelled control
+  instead of an unlabelled button that cycled through three states with no way
+  to tell which one it was in. Twelve accent presets plus a custom colour
+  picker, five palette styles from neutral to vibrant, true-black or dim dark
+  mode, translucent frosted chrome, corner radius, text size and compact
+  density — with a live preview, because "vibrant on true black at radius 4"
+  is not something anyone can picture from a label. Existing themes carry
+  over: the old colour and brightness settings are still read.
+
+- **Voice mode stops re-sending its whole history.** Voice deliberately reuses
+  one long-lived chat so it remembers the last thing it was asked, and nobody
+  ever prunes it — so it grew without limit, and eventually every "what's the
+  time" re-sent months of conversation. What's *sent* is now capped at two
+  dozen messages; the stored transcript stays complete and readable. The cut
+  always lands on one of your turns, never on a tool result whose call has
+  been trimmed away, which every OpenAI-compatible endpoint rejects outright.
+  The chat also gets its own icon in the sidebar, since it isn't a
+  conversation you started.
+
+- **About points at Horizon.** Every link on that page still pointed at
+  upstream Reins — its repository, its website, and its App Store id behind
+  the review button, so "Give a Star" starred someone else's project. They now
+  point here, with upstream credited explicitly instead of accidentally:
+  Horizon is a GPL-3.0 fork of [Reins](https://github.com/ibrahimcetin/reins)
+  by Ibrahim Çetin, and the page says so. The version number is read from the
+  bundle, so the number in a bug report is the real one.
+
+---
+
 ## v3.14.0 — 2026-09-18
 
 Voice mode became a conversation, and three bugs that made it feel broken are

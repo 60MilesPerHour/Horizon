@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:horizon/Constants/constants.dart';
+import 'package:horizon/Constants/horizon_theme.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
 import 'package:horizon/Pages/assistant_page/assistant_page.dart';
 import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
@@ -11,6 +12,7 @@ import 'package:horizon/Pages/ollama_models_page/ollama_models_page.dart';
 import 'package:horizon/Pages/settings_page/settings_page.dart';
 import 'package:horizon/Pages/settings_page/voice_settings_page.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/appearance_controller.dart';
 import 'package:horizon/Services/services.dart';
 import 'package:horizon/Services/voice/speech_recognition_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
@@ -79,11 +81,7 @@ void main() async {
     await inAppReview.requestReview();
   }
 
-  // Load cloud-provider API keys from secure storage (best-effort).
-  String? claudeKey;
-  String? openaiKey;
-  String? openaiBaseUrl;
-  String? geminiKey;
+  // Load API keys and tokens from secure storage (best-effort).
   String? ollamaToken;
   String? cfAccessClientId;
   String? cfAccessClientSecret;
@@ -92,12 +90,9 @@ void main() async {
   String? elevenLabsKey;
   String? whisperKey;
   String? ttsKey;
+  String? haToken;
   try {
     const storage = FlutterSecureStorage();
-    claudeKey = await storage.read(key: 'anthropic_api_key');
-    openaiKey = await storage.read(key: 'openai_api_key');
-    openaiBaseUrl = await storage.read(key: 'openai_base_url');
-    geminiKey = await storage.read(key: 'google_api_key');
     ollamaToken = await storage.read(key: 'ollama_api_token');
     cfAccessClientId = await storage.read(key: 'cf_access_client_id');
     cfAccessClientSecret = await storage.read(key: 'cf_access_client_secret');
@@ -106,6 +101,7 @@ void main() async {
     elevenLabsKey = await storage.read(key: 'elevenlabs_api_key');
     whisperKey = await storage.read(key: 'whisper_api_key');
     ttsKey = await storage.read(key: 'tts_api_key');
+    haToken = await storage.read(key: 'ha_token');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -120,16 +116,10 @@ void main() async {
     searxngUrl: settingsBox.get('searxng_url') as String?,
   );
 
-  // Per-provider hard kill switches. Off by default → the app is Ollama-only
-  // until the user explicitly enables a cloud provider in Settings. This also
-  // prevents the old regression where the model list fixated on a cloud
-  // provider and never showed Ollama.
-  final claudeEnabled = settingsBox.get('enable_anthropic', defaultValue: false) as bool;
-  final openaiEnabled = settingsBox.get('enable_openai', defaultValue: false) as bool;
-  final geminiEnabled = settingsBox.get('enable_google', defaultValue: false) as bool;
-  // OpenRouter is the recommended cloud path, so unlike the three direct
-  // clients it switches itself on as soon as a key exists — one key, every
-  // hosted model, nothing else to enable.
+  // Hard kill switch for the one cloud backend: off means no hosted model
+  // ever appears, so the app is Ollama-only until a key is pasted. It switches
+  // itself on as soon as one exists — one key, every hosted model, nothing
+  // else to enable.
   final openrouterEnabled = settingsBox.get(
     'enable_openrouter',
     defaultValue: openrouterKey != null && openrouterKey.isNotEmpty,
@@ -144,17 +134,28 @@ void main() async {
     apiKey: openrouterKey,
     enabled: openrouterEnabled,
   );
-  final claudeService = ClaudeService(apiKey: claudeKey, enabled: claudeEnabled);
-  final openaiService = OpenAIService(apiKey: openaiKey, baseUrl: openaiBaseUrl, enabled: openaiEnabled);
-  final geminiService = GeminiService(apiKey: geminiKey, enabled: geminiEnabled);
   final registry = ChatServiceRegistry(
     ollama: ollamaService,
     openrouter: openrouterService,
-    claude: claudeService,
-    openai: openaiService,
-    gemini: geminiService,
   );
-  final toolService = ToolService(webSearch: webSearchService);
+
+  // Home Assistant: the instance URL is ordinary config, the long-lived token
+  // is a secret, so the two live in different stores.
+  final homeAssistantService = HomeAssistantService(
+    baseUrl: settingsBox.get('ha_base_url') as String?,
+    token: haToken,
+  );
+
+  // `chatsSource` is wired by ChatProvider below — the search service is built
+  // first, and reading the chat list through a callback means there's no
+  // second copy of it here to go stale.
+  final databaseService = DatabaseService();
+  final chatHistorySearch = ChatHistorySearch(database: databaseService);
+  final toolService = ToolService(
+    webSearch: webSearchService,
+    chatSearch: chatHistorySearch,
+    homeAssistant: homeAssistantService,
+  );
 
   // Voice mode. The services hold config rather than reading Hive on each
   // utterance, mirroring the chat services; Settings mutates them live.
@@ -188,13 +189,13 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => AppearanceController()),
         Provider(create: (_) => ollamaService),
         Provider(create: (_) => openrouterService),
-        Provider(create: (_) => claudeService),
-        Provider(create: (_) => openaiService),
-        Provider(create: (_) => geminiService),
         Provider(create: (_) => registry),
         Provider(create: (_) => webSearchService),
+        Provider(create: (_) => homeAssistantService),
+        Provider(create: (_) => chatHistorySearch),
         Provider(create: (_) => toolService),
         Provider(create: (_) => speechRecognition),
         Provider(create: (_) => speechSynthesis),
@@ -202,7 +203,7 @@ void main() async {
         Provider(create: (_) => elevenLabsTranscriber),
         Provider(create: (_) => speechInput),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
-        Provider(create: (_) => DatabaseService()),
+        Provider(create: (_) => databaseService),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
         Provider(create: (_) => AttachmentService()),
@@ -212,6 +213,7 @@ void main() async {
             databaseService: context.read(),
             webSearch: context.read(),
             toolService: context.read(),
+            chatHistorySearch: context.read(),
           ),
         ),
         ChangeNotifierProvider(
@@ -266,46 +268,33 @@ class _HorizonAppState extends State<HorizonApp> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder(
-      valueListenable: Hive.box('settings').listenable(
-        keys: ['color', 'brightness'],
-      ),
-      builder: (context, box, _) {
-        final brightness = _brightness ?? MediaQuery.platformBrightnessOf(context);
-        final seedColor = box.get('color', defaultValue: Colors.grey) as Color;
+    // One listener for every appearance setting, rather than naming Hive keys
+    // here — which is how a new setting used to end up applying only after a
+    // restart.
+    final appearance = context.watch<AppearanceController>().appearance;
 
-        return MaterialApp(
+    return MaterialApp(
           navigatorKey: _navigatorKey,
           title: AppConstants.appName,
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              brightness: Brightness.light,
-              dynamicSchemeVariant: DynamicSchemeVariant.neutral,
-              seedColor: seedColor,
+          theme: HorizonTheme.light(appearance),
+          darkTheme: HorizonTheme.dark(appearance),
+          themeMode: appearance.themeMode,
+          builder: (context, child) => MediaQuery.withClampedTextScaling(
+            // Multiplies the platform's own scale rather than replacing it, so
+            // a user who has set a system-wide text size keeps it.
+            minScaleFactor:
+                MediaQuery.textScalerOf(context).scale(1) * appearance.textScale,
+            maxScaleFactor:
+                MediaQuery.textScalerOf(context).scale(1) * appearance.textScale,
+            child: ResponsiveBreakpoints.builder(
+              breakpoints: [
+                const Breakpoint(start: 0, end: 450, name: MOBILE),
+                const Breakpoint(start: 451, end: 800, name: TABLET),
+                const Breakpoint(start: 801, end: 1920, name: DESKTOP),
+              ],
+              useShortestSide: true,
+              child: child!,
             ),
-            appBarTheme: const AppBarTheme(centerTitle: true),
-            useMaterial3: true,
-          ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              brightness: Brightness.dark,
-              dynamicSchemeVariant: DynamicSchemeVariant.neutral,
-              seedColor: seedColor,
-              surface: const Color(0xFF000000),
-            ),
-            scaffoldBackgroundColor: const Color(0xFF000000),
-            appBarTheme: const AppBarTheme(centerTitle: true),
-            useMaterial3: true,
-          ),
-          themeMode: brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
-          builder: (context, child) => ResponsiveBreakpoints.builder(
-            breakpoints: [
-              const Breakpoint(start: 0, end: 450, name: MOBILE),
-              const Breakpoint(start: 451, end: 800, name: TABLET),
-              const Breakpoint(start: 801, end: 1920, name: DESKTOP),
-            ],
-            useShortestSide: true,
-            child: child!,
           ),
           onGenerateRoute: (settings) {
             if (settings.name == '/') {
@@ -348,13 +337,5 @@ class _HorizonAppState extends State<HorizonApp> {
             return null;
           },
         );
-      },
-    );
-  }
-
-  Brightness? get _brightness {
-    final brightnessValue = Hive.box('settings').get('brightness');
-    if (brightnessValue == null) return null;
-    return brightnessValue == 1 ? Brightness.light : Brightness.dark;
   }
 }

@@ -105,6 +105,11 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
           onChanged: (v) => setState(() => _chatOptions.artifacts = v),
         ),
         const SizedBox(height: 16),
+        _BridgeTile(
+          value: _chatOptions.bridge,
+          onChanged: (v) => setState(() => _chatOptions.bridge = v),
+        ),
+        const SizedBox(height: 16),
         _BottomSheetTextField(
           initialValue: widget.arguments.systemPrompt,
           labelText: 'System Prompt',
@@ -755,6 +760,44 @@ class _ArtifactsTile extends StatelessWidget {
         subtitle: Text(
           'Render full documents and code files as a card you can open, copy, '
           'and export. Short snippets stay inline.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12.0),
+      ),
+    );
+  }
+}
+
+/// Per-chat opt-in to the assistant's `search_chats` tool.
+///
+/// Off by default, and per-chat rather than global, because the useful version
+/// of "the assistant knows about my other conversations" is the one where it
+/// can reach the chat that matters and cannot reach the ones that don't.
+/// Nothing is sent anywhere by turning this on — the model has to ask for it
+/// by calling the tool, and only ever gets matching excerpts.
+class _BridgeTile extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _BridgeTile({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        secondary: const Icon(Icons.hub_outlined),
+        title: const Text('Share with assistant'),
+        subtitle: Text(
+          'Let your other chats — including voice mode — search this one when '
+          'they need something you discussed here.',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

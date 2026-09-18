@@ -5,6 +5,7 @@ import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
+import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:path/path.dart' as path;
@@ -25,7 +26,8 @@ class DatabaseService {
   ///   2 → chats.provider
   ///   3 → message attachments + tool calls (and 'tool' as a legal role)
   ///   4 → chat lineage, for branching
-  static const int schemaVersion = 4;
+  ///   5 → direct cloud providers retired; chats repointed at OpenRouter
+  static const int schemaVersion = 5;
 
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
@@ -48,6 +50,11 @@ class DatabaseService {
             'ALTER TABLE chats ADD COLUMN branch_point_message_id TEXT;',
           );
         }
+        if (oldVersion < 5) {
+          await db.execute('ALTER TABLE chats ADD COLUMN legacy_provider TEXT;');
+          await db.execute('ALTER TABLE chats ADD COLUMN legacy_model TEXT;');
+          await migrateDirectProvidersToOpenRouter(db);
+        }
       },
       onCreate: (Database db, int version) async {
         await db.execute('''CREATE TABLE IF NOT EXISTS chats (
@@ -58,7 +65,9 @@ system_prompt TEXT,
 options TEXT,
 provider TEXT NOT NULL DEFAULT 'ollama',
 parent_chat_id TEXT,
-branch_point_message_id TEXT
+branch_point_message_id TEXT,
+legacy_provider TEXT,
+legacy_model TEXT
 ) WITHOUT ROWID;''');
 
         await db.execute(_createMessagesTable('messages'));
@@ -123,6 +132,52 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
     await db.execute(_createCleanupJobsTable);
   }
 
+  /// v5 retires the direct Anthropic / OpenAI / Google clients: every chat
+  /// bound to one is repointed at OpenRouter, with its model id rewritten to
+  /// the equivalent OpenRouter slug.
+  ///
+  /// The old provider and model id are kept in `legacy_provider` /
+  /// `legacy_model` rather than discarded. A slug is a best-effort mapping
+  /// ([OpenRouterMigration]), so when one is wrong the chat can still say what
+  /// it used to be instead of just failing to send — and the rewrite can be
+  /// undone by hand.
+  ///
+  /// Rewritten row by row inside a transaction: the mapping is a Dart
+  /// function, not something SQL can express, and a partial pass would leave
+  /// chats pointing at a provider the app no longer contains.
+  static Future<void> migrateDirectProvidersToOpenRouter(Database db) async {
+    final rows = await db.query(
+      'chats',
+      columns: ['chat_id', 'model', 'provider'],
+      where: 'provider IN (?, ?, ?)',
+      whereArgs: OpenRouterMigration.retiredProviders.keys.toList(),
+    );
+    if (rows.isEmpty) return;
+
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final migrated = OpenRouterMigration.migrate(
+          provider: row['provider'] as String?,
+          model: (row['model'] as String?) ?? '',
+        );
+        // A row with an empty model can't be mapped to anything, but it still
+        // has to leave the dead provider: it moves across keeping its model,
+        // and will need a pick in the UI.
+        await txn.update(
+          'chats',
+          {
+            'provider': 'openrouter',
+            if (migrated != null) 'model': migrated.model,
+            'legacy_provider': migrated?.legacyProvider ?? row['provider'],
+            'legacy_model': migrated?.legacyModel ?? row['model'],
+          },
+          where: 'chat_id = ?',
+          whereArgs: [row['chat_id']],
+        );
+      }
+    });
+  }
+
   Future<void> close() async => _db.close();
 
   // Chat Operations
@@ -132,6 +187,8 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
     String provider = 'ollama',
     String? parentChatId,
     String? branchPointMessageId,
+    String? legacyProvider,
+    String? legacyModel,
   }) async {
     final id = Uuid().v4();
 
@@ -144,6 +201,8 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
       'provider': provider,
       'parent_chat_id': parentChatId,
       'branch_point_message_id': branchPointMessageId,
+      'legacy_provider': legacyProvider,
+      'legacy_model': legacyModel,
     });
 
     return (await getChat(id))!;
@@ -173,6 +232,10 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
       provider: source.provider,
       parentChatId: source.id,
       branchPointMessageId: throughMessageId,
+      // Carried over, or a branch of a migrated chat loses the record of what
+      // it originally ran on.
+      legacyProvider: source.legacyProvider,
+      legacyModel: source.legacyModel,
     );
     await updateChat(
       branch,
@@ -253,7 +316,7 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
 
   Future<List<OllamaChat>> getAllChats() async {
     final List<Map<String, dynamic>> maps = await _db.rawQuery(
-        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.provider, chats.parent_chat_id, chats.branch_point_message_id, MAX(messages.timestamp) AS last_update
+        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.provider, chats.parent_chat_id, chats.branch_point_message_id, chats.legacy_provider, chats.legacy_model, MAX(messages.timestamp) AS last_update
 FROM chats
 LEFT JOIN messages ON chats.chat_id = messages.chat_id
 GROUP BY chats.chat_id
@@ -312,6 +375,72 @@ ORDER BY last_update DESC;''');
     );
 
     _cleanupDeletedImages();
+  }
+
+  /// Keyword search across the messages of specific chats, newest first.
+  ///
+  /// Backs the assistant's `search_chats` tool. Every term must appear in the
+  /// message (AND, not OR): the model writes queries like "mazda oil filter
+  /// part number", and an OR search on that returns every message that has
+  /// ever said "part".
+  ///
+  /// LIKE rather than FTS5: a virtual table means another migration that then
+  /// has to stay in sync with every write, and a personal chat archive is
+  /// small enough that a scan is imperceptible. If that stops being true,
+  /// this is the one place that changes.
+  Future<List<ChatMessageHit>> searchMessages({
+    required List<String> chatIds,
+    required List<String> terms,
+    int limit = 8,
+  }) async {
+    if (chatIds.isEmpty || terms.isEmpty) return const [];
+
+    final chatPlaceholders = List.filled(chatIds.length, '?').join(', ');
+    final termClauses =
+        List.filled(terms.length, 'content LIKE ?').join(' AND ');
+
+    final rows = await _db.rawQuery(
+      '''SELECT messages.chat_id, messages.content, messages.role,
+       messages.timestamp, chats.chat_title
+FROM messages
+JOIN chats ON chats.chat_id = messages.chat_id
+WHERE messages.chat_id IN ($chatPlaceholders)
+  AND messages.role IN ('user', 'assistant')
+  AND $termClauses
+ORDER BY messages.timestamp DESC
+LIMIT ?;''',
+      [
+        ...chatIds,
+        // Wildcards are stripped, not escaped: SQLite's LIKE has no default
+        // escape character, and a literal % in a search term is not a real
+        // query — but left alone it would match everything.
+        ...terms.map((t) => '%${_escapeLike(t)}%'),
+        limit,
+      ],
+    );
+
+    return rows
+        .map((row) => ChatMessageHit(
+              chatId: row['chat_id'] as String,
+              chatTitle: (row['chat_title'] as String?) ?? 'Untitled',
+              role: (row['role'] as String?) ?? 'user',
+              content: (row['content'] as String?) ?? '',
+              timestamp: _parseTimestamp(row['timestamp']),
+            ))
+        .toList();
+  }
+
+  static String _escapeLike(String term) =>
+      term.replaceAll('%', '').replaceAll('_', ' ');
+
+  /// Timestamps are written as epoch millis by the app, but rows old enough
+  /// carry SQLite's CURRENT_TIMESTAMP string default instead.
+  static DateTime _parseTimestamp(Object? raw) {
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    if (raw is String) {
+      return DateTime.tryParse(raw)?.toLocal() ?? DateTime.now();
+    }
+    return DateTime.now();
   }
 
   Future<List<OllamaMessage>> getMessages(String chatId) async {
@@ -433,4 +562,22 @@ ORDER BY last_update DESC;''');
             )))
         .toList();
   }
+}
+
+/// One message matched by [DatabaseService.searchMessages], with enough
+/// context for the model to say which conversation it came from.
+class ChatMessageHit {
+  const ChatMessageHit({
+    required this.chatId,
+    required this.chatTitle,
+    required this.role,
+    required this.content,
+    required this.timestamp,
+  });
+
+  final String chatId;
+  final String chatTitle;
+  final String role;
+  final String content;
+  final DateTime timestamp;
 }

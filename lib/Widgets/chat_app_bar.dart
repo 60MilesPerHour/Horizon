@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Widgets/chat_configure_bottom_sheet.dart';
+import 'package:horizon/Widgets/frosted_surface.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 import 'package:horizon/Widgets/ollama_health_indicator.dart';
 import 'package:provider/provider.dart';
@@ -20,6 +21,10 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     final chatProvider = Provider.of<ChatProvider>(context);
 
     return AppBar(
+      // Paints the blur *behind* the bar's own contents; a BackdropFilter
+      // only blurs what's already been painted under it, and the bar's
+      // background is transparent under the frosted style (see HorizonTheme).
+      flexibleSpace: const FrostedSurface(),
       title: Column(
         children: [
           Text(AppConstants.appName, style: GoogleFonts.pacifico()),

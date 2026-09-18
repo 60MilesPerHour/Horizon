@@ -46,3 +46,8 @@ app.*.map.json
 
 # Databases written by the test suite
 test/assets/*.db
+# Hive boxes opened by the test suite. `settings.hive` is tracked on purpose —
+# the widget tests expect it to exist — but a box a test opens for itself is
+# rewritten on every run.
+test/assets/appearance_test.hive
+test/assets/*.lock
