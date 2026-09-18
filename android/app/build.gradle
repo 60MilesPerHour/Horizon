@@ -14,7 +14,12 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.miles.horizon"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+    // Tracks the Flutter SDK rather than being pinned. It was hardcoded to
+    // 27.0.12077973 for Flutter 3.27; on 3.44 the expected version is
+    // 28.2.13676358, and a plugin needing the SDK's version against a
+    // hardcoded older one is a build failure. Following flutter.ndkVersion
+    // means the next upgrade doesn't need this line touched at all.
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

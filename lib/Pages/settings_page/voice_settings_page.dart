@@ -346,9 +346,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
         final value = locales.any((l) => l.id == current) ? current : '';
         return DropdownButtonFormField<String>(
-          // CI pins Flutter 3.27, where this is `value`, not `initialValue`.
-          // ignore: deprecated_member_use
-          value: value,
+          initialValue: value,
           decoration: const InputDecoration(
             labelText: 'Language',
             border: OutlineInputBorder(),
@@ -575,8 +573,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     final hasCurrent = _elevenLabsVoices.any((v) => v.id == currentId);
 
     return DropdownButtonFormField<String>(
-      // ignore: deprecated_member_use
-      value: hasCurrent ? currentId : _elevenLabsVoices.first.id,
+      initialValue: hasCurrent ? currentId : _elevenLabsVoices.first.id,
       decoration: const InputDecoration(
         labelText: 'Voice',
         border: OutlineInputBorder(),
