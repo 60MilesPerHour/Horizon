@@ -1,0 +1,25 @@
+# openWakeWord training on the AI rig instead of Colab.
+#
+#   docker compose build
+#   docker compose run --rm preview hey_ass_trul     # hear it first
+#   docker compose run --rm train hey_ass_trul       # ~30-60 min on a 3090
+#
+# Models land in ./out, datasets cache in ./data (~3 GB, reused across runs).
+services:
+  train: &base
+    build: .
+    image: horizon-wakeword-training
+    volumes:
+      - ./out:/out
+      - ./data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  preview:
+    <<: *base
+    entrypoint: ["python", "/work/preview.py"]
