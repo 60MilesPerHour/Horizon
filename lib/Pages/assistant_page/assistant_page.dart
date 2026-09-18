@@ -7,6 +7,7 @@ import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/voice/speech_recognition_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/voice_session_controller.dart';
+import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
 /// Full-screen hands-free voice mode.
 ///
@@ -28,6 +29,12 @@ class _AssistantPageState extends State<AssistantPage> {
   VoiceSessionController? _controller;
   String? _setupError;
   bool _preparing = true;
+
+  /// Typed input is opt-in: showing a keyboard by default would undercut the
+  /// point of a one-tap voice screen.
+  bool _showComposer = false;
+  final _composerController = TextEditingController();
+  final _composerFocus = FocusNode();
 
   @override
   void initState() {
@@ -88,6 +95,24 @@ class _AssistantPageState extends State<AssistantPage> {
     if (widget.autoStart) await controller.startListening();
   }
 
+  Future<void> _changeModel() async {
+    final chatProvider = context.read<ChatProvider>();
+    final selected = await showModelSelectionBottomSheet(
+      context: context,
+      title: 'Assistant Model',
+      currentModelName: chatProvider.currentChat?.model,
+    );
+    if (selected == null) return;
+
+    // Repins the assistant chat AND the stored preference, so the choice
+    // survives the chat being deleted and recreated.
+    await chatProvider.updateCurrentChat(
+      newModel: selected.name,
+      newProvider: selected.provider,
+    );
+    await Hive.box('settings').put('assistant_model', selected.name);
+  }
+
   void _fail(String message) {
     if (!mounted) return;
     setState(() {
@@ -99,7 +124,25 @@ class _AssistantPageState extends State<AssistantPage> {
   @override
   void dispose() {
     _controller?.dispose();
+    _composerController.dispose();
+    _composerFocus.dispose();
     super.dispose();
+  }
+
+  void _toggleComposer() {
+    setState(() => _showComposer = !_showComposer);
+    if (_showComposer) {
+      _composerFocus.requestFocus();
+    } else {
+      _composerFocus.unfocus();
+    }
+  }
+
+  Future<void> _submitTyped() async {
+    final text = _composerController.text;
+    if (text.trim().isEmpty) return;
+    _composerController.clear();
+    await _controller?.sendText(text);
   }
 
   @override
@@ -108,8 +151,31 @@ class _AssistantPageState extends State<AssistantPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Assistant'),
+        // The model name, not a static title: in voice mode there's otherwise
+        // nothing on screen saying which model is about to answer, and the
+        // chat view puts this same control in its app bar.
+        title: TextButton.icon(
+          onPressed: _controller == null ? null : _changeModel,
+          icon: const Icon(Icons.expand_more, size: 20),
+          iconAlignment: IconAlignment.end,
+          label: Text(
+            context.watch<ChatProvider>().currentChat?.model ?? 'Assistant',
+            overflow: TextOverflow.ellipsis,
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: theme.colorScheme.onSurface,
+            textStyle: theme.textTheme.titleMedium,
+          ),
+        ),
         actions: [
+          if (_controller != null)
+            IconButton(
+              tooltip: _showComposer ? 'Hide keyboard' : 'Type instead',
+              icon: Icon(_showComposer
+                  ? Icons.keyboard_hide_outlined
+                  : Icons.keyboard_outlined),
+              onPressed: _toggleComposer,
+            ),
           if (_controller != null)
             IconButton(
               tooltip: _controller!.speakReplies
@@ -182,6 +248,7 @@ class _AssistantPageState extends State<AssistantPage> {
         return Column(
           children: [
             Expanded(child: _buildTranscript(theme, controller)),
+            if (_showComposer) _buildComposer(theme, controller),
             _buildStatusLine(theme, controller),
             const SizedBox(height: 12),
             _MicButton(
@@ -243,6 +310,33 @@ class _AssistantPageState extends State<AssistantPage> {
               style: theme.textTheme.headlineSmall?.copyWith(height: 1.35),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildComposer(ThemeData theme, VoiceSessionController controller) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: TextField(
+        controller: _composerController,
+        focusNode: _composerFocus,
+        enabled: !controller.isBusy,
+        minLines: 1,
+        maxLines: 4,
+        textInputAction: TextInputAction.send,
+        textCapitalization: TextCapitalization.sentences,
+        onSubmitted: (_) => _submitTyped(),
+        decoration: InputDecoration(
+          hintText: 'Type a message',
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(24.0),
+          ),
+          isDense: true,
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.arrow_upward_rounded),
+            onPressed: controller.isBusy ? null : _submitTyped,
+          ),
+        ),
       ),
     );
   }

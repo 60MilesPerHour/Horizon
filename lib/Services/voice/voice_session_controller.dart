@@ -156,6 +156,24 @@ class VoiceSessionController extends ChangeNotifier {
     unawaited(_send(prompt));
   }
 
+  /// Sends a typed prompt through the same path as a spoken one, so the reply
+  /// still streams and is still read aloud. For the times when dictation
+  /// keeps mishearing a word, or you're somewhere you can't talk.
+  Future<void> sendText(String text) async {
+    final prompt = text.trim();
+    if (prompt.isEmpty || isBusy) return;
+
+    // Stop any residual playback first, or the previous answer talks over the
+    // new one's opening sentence.
+    await _synthesis.stop();
+    await _recognition.cancel();
+
+    error = null;
+    transcript = prompt;
+    notifyListeners();
+    await _send(prompt);
+  }
+
   Future<void> _send(String prompt) async {
     _setPhase(VoicePhase.thinking);
     reply = '';
