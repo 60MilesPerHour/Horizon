@@ -35,6 +35,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
   List<SpeechVoice> _elevenLabsVoices = const [];
   bool _loadingVoices = false;
+  bool _previewingVoice = false;
 
   @override
   void initState() {
@@ -402,6 +403,25 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
             }
           },
         ),
+        if (_synthesis.engine == SpeechEngine.system)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Hear the device voice as it will read replies.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                _previewButton(
+                  SpeechEngine.system,
+                  null,
+                  locale: _settings.get('voice_tts_locale') as String?,
+                ),
+              ],
+            ),
+          ),
         const SizedBox(height: 4),
         Text(
           switch (_synthesis.engine) {
@@ -537,19 +557,63 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     final currentId = _synthesis.elevenLabsVoiceId;
     final hasCurrent = _elevenLabsVoices.any((v) => v.id == currentId);
 
-    return DropdownButtonFormField<String>(
-      initialValue: hasCurrent ? currentId : _elevenLabsVoices.first.id,
-      decoration: const InputDecoration(
-        labelText: 'Voice',
-        border: OutlineInputBorder(),
-      ),
-      items: _elevenLabsVoices
-          .map((v) => DropdownMenuItem(value: v.id, child: Text(v.name)))
-          .toList(),
-      onChanged: (value) async {
-        if (value == null) return;
-        setState(() => _synthesis.elevenLabsVoiceId = value);
-        await _settings.put('elevenlabs_voice_id', value);
+    return Row(
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            initialValue: hasCurrent ? currentId : _elevenLabsVoices.first.id,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Voice',
+              border: OutlineInputBorder(),
+            ),
+            items: _elevenLabsVoices
+                .map((v) => DropdownMenuItem(value: v.id, child: Text(v.name)))
+                .toList(),
+            onChanged: (value) async {
+              if (value == null) return;
+              setState(() => _synthesis.elevenLabsVoiceId = value);
+              await _settings.put('elevenlabs_voice_id', value);
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        _previewButton(SpeechEngine.elevenLabs, _synthesis.elevenLabsVoiceId),
+      ],
+    );
+  }
+
+  /// Play button for auditioning a voice. Shared by the ElevenLabs picker and
+  /// the device-voice row; the self-hosted one lives in SpeechServerFields
+  /// because it needs the address and model as currently typed.
+  Widget _previewButton(SpeechEngine engine, String? voice, {String? locale}) {
+    if (_previewingVoice) {
+      return const Padding(
+        padding: EdgeInsets.all(12.0),
+        child: SizedBox(
+          width: 20, height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return IconButton.filledTonal(
+      icon: const Icon(Icons.play_arrow),
+      tooltip: 'Hear this voice',
+      onPressed: () async {
+        final messenger = ScaffoldMessenger.of(context);
+        setState(() => _previewingVoice = true);
+        final ok = await _synthesis.previewVoice(
+          engine: engine,
+          voice: voice,
+          localeOverride: locale,
+        );
+        if (!mounted) return;
+        setState(() => _previewingVoice = false);
+        if (!ok) {
+          messenger.showSnackBar(const SnackBar(
+            content: Text('Could not play a preview.'),
+          ));
+        }
       },
     );
   }

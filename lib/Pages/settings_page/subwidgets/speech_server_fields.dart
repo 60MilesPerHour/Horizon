@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:provider/provider.dart';
+
 import 'package:horizon/Services/network_discovery_service.dart';
+import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/speech_model_catalogue.dart';
 
 /// Server address, network scan, and model/voice pickers for a speech server.
@@ -51,6 +54,7 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
   List<SpeechServerModel> _models = const [];
   bool _loading = false;
   bool _scanning = false;
+  bool _previewing = false;
   String? _status;
 
   @override
@@ -257,21 +261,69 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
       );
     }
 
-    return DropdownButtonFormField<String>(
-      initialValue: voices.contains(_voice) ? _voice : voices.first,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Voice',
-        border: OutlineInputBorder(),
-      ),
-      items: voices
-          .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-          .toList(),
-      onChanged: (value) {
-        if (value == null) return;
-        setState(() => _voice = value);
-        widget.onVoiceChanged?.call(value);
-      },
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            initialValue: voices.contains(_voice) ? _voice : voices.first,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Voice',
+              border: OutlineInputBorder(),
+            ),
+            items: voices
+                .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _voice = value);
+              widget.onVoiceChanged?.call(value);
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Auditioning rather than picking blind: Kokoro ships around fifty
+        // voices and the names say nothing about how they sound. Deliberately
+        // a button, not preview-on-select — audio that plays itself when you
+        // open a dropdown is hostile.
+        _previewing
+            ? const Padding(
+                padding: EdgeInsets.all(12.0),
+                child: SizedBox(
+                  width: 20, height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : IconButton.filledTonal(
+                icon: const Icon(Icons.play_arrow),
+                tooltip: 'Hear this voice',
+                onPressed: _previewSelectedVoice,
+              ),
+      ],
     );
+  }
+
+  Future<void> _previewSelectedVoice() async {
+    final synthesis = context.read<SpeechSynthesisService>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _previewing = true);
+
+    // The address and model as currently typed, not as saved — so a voice can
+    // be auditioned against a server being set up for the first time.
+    final ok = await synthesis.previewVoice(
+      engine: SpeechEngine.selfHosted,
+      voice: _voice,
+      model: _model,
+      baseUrl: _address.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => _previewing = false);
+    if (!ok) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Could not play a preview from that server.'),
+      ));
+    }
   }
 }

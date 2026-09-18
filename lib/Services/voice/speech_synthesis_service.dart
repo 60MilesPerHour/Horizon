@@ -132,23 +132,6 @@ class SpeechSynthesisService {
   /// Kokoro's default American female voice.
   static const String defaultSelfHostedVoice = 'af_heart';
 
-  /// A few Kokoro voices, offered as suggestions. Speaches has no endpoint
-  /// for listing them yet (its docs mark that TODO), so this is a starting
-  /// point rather than a claim about what the server has installed — the
-  /// field stays free text.
-  static const List<String> kokoroVoiceSuggestions = [
-    'af_heart',
-    'af_bella',
-    'af_nicole',
-    'af_sky',
-    'am_michael',
-    'am_puck',
-    'bf_emma',
-    'bf_isabella',
-    'bm_george',
-    'bm_lewis',
-  ];
-
   /// ElevenLabs' "Rachel" — a stock voice on every account.
   static const String _defaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
 
@@ -210,8 +193,8 @@ class SpeechSynthesisService {
   /// trailing slash, and a base that already ends in `/v1` — the same
   /// leniency the Whisper transcriber needs, and for the same reason: these
   /// servers get written down both ways.
-  Uri selfHostedEndpoint() {
-    var base = selfHostedBaseUrl.trim();
+  Uri selfHostedEndpoint({String? override}) {
+    var base = (override ?? selfHostedBaseUrl).trim();
     if (!base.startsWith('http://') && !base.startsWith('https://')) {
       base = 'http://$base';
     }
@@ -346,6 +329,71 @@ class SpeechSynthesisService {
     }
   }
 
+  /// Short line used to audition a voice.
+  ///
+  /// Deliberately a sentence with varied vowels and a comma rather than
+  /// "test": prosody and pacing are most of what distinguishes one voice from
+  /// another, and a single word reveals neither.
+  static const String previewPhrase =
+      "Hello — this is how I sound when I read your replies aloud.";
+
+  /// Speaks [previewPhrase] in a specific voice, without changing the
+  /// configured one.
+  ///
+  /// Auditioning matters here because Kokoro ships around fifty voices and
+  /// ElevenLabs accounts carry their own; choosing from a dropdown of names
+  /// is guesswork otherwise. Returns false when nothing could be produced,
+  /// so the UI can say so instead of appearing to do nothing.
+  Future<bool> previewVoice({
+    required SpeechEngine engine,
+    String? voice,
+    String? model,
+    String? baseUrl,
+    String? localeOverride,
+  }) async {
+    // Stop whatever is queued first: overlapping a preview with a reply being
+    // read out makes both unintelligible.
+    await stop();
+    _stopped = false;
+
+    switch (engine) {
+      case SpeechEngine.selfHosted:
+        final bytes = await _synthesizeSelfHosted(
+          previewPhrase,
+          voice: voice,
+          model: model,
+          baseUrl: baseUrl,
+        );
+        if (bytes == null) return false;
+        await _playBytes(bytes);
+        return true;
+
+      case SpeechEngine.elevenLabs:
+        final bytes = await _synthesizeElevenLabs(
+          previewPhrase,
+          voiceOverride: voice,
+        );
+        if (bytes == null) return false;
+        await _playBytes(bytes);
+        return true;
+
+      case SpeechEngine.system:
+        try {
+          await _configureSystemTts();
+          if (localeOverride != null && localeOverride.isNotEmpty) {
+            await _systemTts.setLanguage(localeOverride);
+            // The override is transient; restore what's configured so a
+            // preview can't silently change the voice used for real replies.
+            _systemTtsConfigured = false;
+          }
+          await _systemTts.speak(previewPhrase);
+          return true;
+        } catch (_) {
+          return false;
+        }
+    }
+  }
+
   /// Dispatches to whichever remote engine is active.
   Future<Uint8List?> _synthesizeRemote(String text) {
     switch (effectiveEngine) {
@@ -359,24 +407,29 @@ class SpeechSynthesisService {
   }
 
   /// OpenAI's `/v1/audio/speech` shape, which Speaches implements verbatim.
-  Future<Uint8List?> _synthesizeSelfHosted(String text) async {
-    if (!isSelfHostedConfigured) return null;
+  Future<Uint8List?> _synthesizeSelfHosted(
+    String text, {
+    String? voice,
+    String? model,
+    String? baseUrl,
+  }) async {
+    if (baseUrl == null && !isSelfHostedConfigured) return null;
     try {
       final response = await HorizonHttp.client
           .post(
-            selfHostedEndpoint(),
+            selfHostedEndpoint(override: baseUrl),
             headers: {
               'content-type': 'application/json',
               if (selfHostedKey.trim().isNotEmpty)
                 'Authorization': 'Bearer ${selfHostedKey.trim()}',
             },
             body: json.encode({
-              'model': selfHostedModel.trim().isEmpty
+              'model': (model ?? selfHostedModel).trim().isEmpty
                   ? defaultSelfHostedModel
-                  : selfHostedModel.trim(),
-              'voice': selfHostedVoice.trim().isEmpty
+                  : (model ?? selfHostedModel).trim(),
+              'voice': (voice ?? selfHostedVoice).trim().isEmpty
                   ? defaultSelfHostedVoice
-                  : selfHostedVoice.trim(),
+                  : (voice ?? selfHostedVoice).trim(),
               'input': text,
               // Speaches supports mp3 and wav but not opus or aac; mp3 is the
               // smaller of the two over the wire.
@@ -395,9 +448,13 @@ class SpeechSynthesisService {
     }
   }
 
-  Future<Uint8List?> _synthesizeElevenLabs(String text) async {
+  Future<Uint8List?> _synthesizeElevenLabs(
+    String text, {
+    String? voiceOverride,
+  }) async {
     if (elevenLabsKey.isEmpty) return null;
-    final voice = elevenLabsVoiceId.isEmpty ? _defaultVoiceId : elevenLabsVoiceId;
+    final requested = voiceOverride ?? elevenLabsVoiceId;
+    final voice = requested.isEmpty ? _defaultVoiceId : requested;
     final uri = Uri.https(
       'api.elevenlabs.io',
       '/v1/text-to-speech/$voice',

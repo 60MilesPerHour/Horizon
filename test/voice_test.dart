@@ -167,8 +167,21 @@ void main() {
     test('defaults target Speaches with Kokoro', () {
       final s = SpeechSynthesisService();
       expect(s.selfHostedModel, contains('Kokoro'));
-      expect(SpeechSynthesisService.kokoroVoiceSuggestions,
-          contains(s.selfHostedVoice));
+      // Voices are read from the server now (Kokoro reports 54), so the
+      // default is only a starting point until the picker loads.
+      expect(s.selfHostedVoice, SpeechSynthesisService.defaultSelfHostedVoice);
+    });
+
+    test('a preview can override voice, model and address', () {
+      // Auditioning must not disturb what is configured for real replies.
+      final s = SpeechSynthesisService(
+        selfHostedBaseUrl: 'http://configured.test',
+      );
+      expect(s.selfHostedEndpoint().host, 'configured.test');
+      expect(s.selfHostedEndpoint(override: 'http://typed.test:8001').host,
+          'typed.test');
+      expect(s.selfHostedBaseUrl, 'http://configured.test',
+          reason: 'an override must not mutate the configured address');
     });
 
     test('without an address it falls back to the device voice', () {
