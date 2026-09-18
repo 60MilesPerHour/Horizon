@@ -64,7 +64,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
 
   # Google Fonts package for custom fonts
-  google_fonts: 6.3.0
+  google_fonts: ^8.2.1
 
   # SVG rendering and widget library
   flutter_svg: ^2.0.14
