@@ -36,15 +36,20 @@ class MainActivity : FlutterActivity() {
             CHANNEL_NAME,
         ).apply {
             setMethodCallHandler { call, result ->
+                // Qualified: inside apply { } and the handler lambda, a bare
+                // `this` is the MethodChannel, not the Activity.
+                val context = this@MainActivity
                 when (call.method) {
                     // Lets the Flutter side ask whether Horizon currently holds
                     // the assistant role, so Settings can show the real state
                     // instead of a link and a guess.
                     "isDefaultAssistant" -> result.success(
-                        AssistantRole.isDefaultAssistant(this)
+                        AssistantRole.isDefaultAssistant(context)
                     )
                     "openAssistantSettings" -> {
-                        result.success(AssistantRole.openAssistantSettings(this))
+                        result.success(
+                            AssistantRole.openAssistantSettings(context)
+                        )
                     }
                     else -> result.notImplemented()
                 }

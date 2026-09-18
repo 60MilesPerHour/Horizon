@@ -7,6 +7,9 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
+// Imported explicitly rather than relying on the inherited nested classifier
+// being in scope by simple name.
+import android.speech.RecognitionService.Callback
 import android.speech.SpeechRecognizer
 
 /**
@@ -125,7 +128,7 @@ class HorizonRecognitionService : RecognitionService() {
     private class ForwardingListener(private val callback: Callback) :
         RecognitionListener {
 
-        private inline fun forward(block: () -> Unit) {
+        private fun forward(block: () -> Unit) {
             try {
                 block()
             } catch (_: Throwable) {
