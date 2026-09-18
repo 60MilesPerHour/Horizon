@@ -46,6 +46,23 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         // otherwise the dot is noise for cloud-only users.
         if (chatProvider.currentChat?.provider == 'ollama' || chatProvider.currentChat == null)
           const OllamaHealthIndicator(),
+        // A branch is otherwise indistinguishable from a duplicate in the
+        // sidebar, so give it a visible way back to what it came from.
+        if (chatProvider.currentChat?.isBranch == true)
+          IconButton(
+            icon: const Icon(Icons.call_split),
+            tooltip: 'Go to the chat this was branched from',
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final opened =
+                  await chatProvider.openParentOf(chatProvider.currentChat!);
+              if (!opened) {
+                messenger.showSnackBar(const SnackBar(
+                  content: Text('The original chat has been deleted.'),
+                ));
+              }
+            },
+          ),
         IconButton(
           icon: const Icon(Icons.file_upload_outlined),
           tooltip: 'Import chat from file',

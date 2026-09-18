@@ -111,6 +111,11 @@ class _ChatBubbleState extends State<ChatBubble>
           leadingIcon: Icon(Icons.refresh_outlined),
           child: const Text('Regenerate'),
         ),
+        MenuItemButton(
+          onPressed: () => actions.handleBranch(context),
+          leadingIcon: Icon(Icons.call_split),
+          child: const Text('Branch from here'),
+        ),
         Divider(),
         MenuItemButton(
           onPressed: () => actions.handleEdit(context),

@@ -47,6 +47,25 @@ class ChatBubbleActions {
     });
   }
 
+  /// Forks the chat here, keeping everything up to this message.
+  ///
+  /// The alternative the app already had was editing or regenerating, both of
+  /// which throw away what came after. This keeps it.
+  void handleBranch(BuildContext context) {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Same reason as handleRegenerate: let the menu's exit animation finish
+    // before the chat list is rebuilt underneath it.
+    Future.delayed(const Duration(milliseconds: 220), () async {
+      final branch = await chatProvider.branchFromMessage(message);
+      if (branch == null) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Branched into "${branch.title}"')),
+      );
+    });
+  }
+
   void handleEdit(BuildContext context) {
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 

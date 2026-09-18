@@ -11,6 +11,16 @@ class OllamaChat {
   /// Backing provider for this chat: 'ollama' (default), 'anthropic', 'openai'.
   final String provider;
 
+  /// Chat this one was branched from, or null if it wasn't. Kept so the UI can
+  /// offer a way back to the original — a branch with no visible lineage is
+  /// just a mystery duplicate in the sidebar.
+  final String? parentChatId;
+
+  /// Message in the parent that this branch was taken after.
+  final String? branchPointMessageId;
+
+  bool get isBranch => parentChatId != null;
+
   OllamaChat({
     String? id,
     required this.model,
@@ -18,6 +28,8 @@ class OllamaChat {
     this.systemPrompt,
     OllamaChatOptions? options,
     String? provider,
+    this.parentChatId,
+    this.branchPointMessageId,
   })  : id = id ?? Uuid().v4(),
         title = title ?? 'New Chat',
         options = options ?? OllamaChatOptions(),
@@ -33,6 +45,8 @@ class OllamaChat {
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
       provider: inferProvider(model, storedProvider),
+      parentChatId: map['parent_chat_id'] as String?,
+      branchPointMessageId: map['branch_point_message_id'] as String?,
     );
   }
 

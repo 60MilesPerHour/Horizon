@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Models/ollama_chat.dart';
+import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
@@ -23,7 +24,8 @@ class DatabaseService {
   ///   1 → original
   ///   2 → chats.provider
   ///   3 → message attachments + tool calls (and 'tool' as a legal role)
-  static const int schemaVersion = 3;
+  ///   4 → chat lineage, for branching
+  static const int schemaVersion = 4;
 
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
@@ -38,6 +40,14 @@ class DatabaseService {
         if (oldVersion < 3) {
           await _upgradeToV3(db);
         }
+        if (oldVersion < 4) {
+          // Plain column additions, unlike v3: no CHECK constraint is
+          // involved, so no table rebuild.
+          await db.execute('ALTER TABLE chats ADD COLUMN parent_chat_id TEXT;');
+          await db.execute(
+            'ALTER TABLE chats ADD COLUMN branch_point_message_id TEXT;',
+          );
+        }
       },
       onCreate: (Database db, int version) async {
         await db.execute('''CREATE TABLE IF NOT EXISTS chats (
@@ -46,7 +56,9 @@ model TEXT NOT NULL,
 chat_title TEXT NOT NULL,
 system_prompt TEXT,
 options TEXT,
-provider TEXT NOT NULL DEFAULT 'ollama'
+provider TEXT NOT NULL DEFAULT 'ollama',
+parent_chat_id TEXT,
+branch_point_message_id TEXT
 ) WITHOUT ROWID;''');
 
         await db.execute(_createMessagesTable('messages'));
@@ -115,7 +127,12 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
 
   // Chat Operations
 
-  Future<OllamaChat> createChat(String model, {String provider = 'ollama'}) async {
+  Future<OllamaChat> createChat(
+    String model, {
+    String provider = 'ollama',
+    String? parentChatId,
+    String? branchPointMessageId,
+  }) async {
     final id = Uuid().v4();
 
     await _db.insert('chats', {
@@ -125,9 +142,58 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
       'system_prompt': null,
       'options': null,
       'provider': provider,
+      'parent_chat_id': parentChatId,
+      'branch_point_message_id': branchPointMessageId,
     });
 
     return (await getChat(id))!;
+  }
+
+  /// Copies [source] and its messages up to and including [throughMessageId]
+  /// into a new chat, recording where it came from.
+  ///
+  /// The copies get fresh message ids but keep their original timestamps, so
+  /// the branch reads in the right order and the same file paths are reused
+  /// rather than the images and attachments being duplicated on disk. Sharing
+  /// paths is why [_cleanupDeletedImages] has to check for other references
+  /// before deleting anything.
+  Future<OllamaChat> branchChat(
+    OllamaChat source, {
+    required String throughMessageId,
+    String? newTitle,
+  }) async {
+    final messages = await getMessages(source.id);
+    final cutoff = messages.indexWhere((m) => m.id == throughMessageId);
+    if (cutoff == -1) {
+      throw OllamaException('That message is no longer in the chat.');
+    }
+
+    final branch = await createChat(
+      source.model,
+      provider: source.provider,
+      parentChatId: source.id,
+      branchPointMessageId: throughMessageId,
+    );
+    await updateChat(
+      branch,
+      newTitle: newTitle ?? source.title,
+      newSystemPrompt: source.systemPrompt,
+      newOptions: source.options,
+    );
+
+    await _db.transaction((txn) async {
+      for (final message in messages.take(cutoff + 1)) {
+        await txn.insert('messages', {
+          ...message.toDatabaseMap(),
+          'chat_id': branch.id,
+          // A fresh id: the original message keeps existing, and message_id is
+          // the primary key.
+          'message_id': Uuid().v4(),
+        });
+      }
+    });
+
+    return (await getChat(branch.id))!;
   }
 
   Future<OllamaChat?> getChat(String chatId) async {
@@ -160,6 +226,8 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
         'system_prompt': newSystemPrompt ?? chat.systemPrompt,
         'options': newOptions?.toJson() ?? chat.options.toJson(),
         'provider': newProvider ?? chat.provider,
+        'parent_chat_id': chat.parentChatId,
+        'branch_point_message_id': chat.branchPointMessageId,
       },
       where: 'chat_id = ?',
       whereArgs: [chat.id],
@@ -185,7 +253,7 @@ SELECT message_id, chat_id, content, images, role, timestamp FROM messages;''');
 
   Future<List<OllamaChat>> getAllChats() async {
     final List<Map<String, dynamic>> maps = await _db.rawQuery(
-        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.provider, MAX(messages.timestamp) AS last_update
+        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.provider, chats.parent_chat_id, chats.branch_point_message_id, MAX(messages.timestamp) AS last_update
 FROM chats
 LEFT JOIN messages ON chats.chat_id = messages.chat_id
 GROUP BY chats.chat_id
@@ -281,6 +349,13 @@ ORDER BY last_update DESC;''');
       columns: ['id', 'image_paths', 'attachment_paths'],
     );
 
+    // Branching copies messages while reusing their file paths, so a path
+    // queued for cleanup may still belong to a live message in another chat.
+    // Deleting it would blank out the image in the chat that was branched
+    // FROM, which is a silent data loss the user can't undo. So collect
+    // everything still referenced and never touch those paths.
+    final referenced = await _referencedFilePaths();
+
     for (final result in results) {
       try {
         final files = <File>[
@@ -289,6 +364,7 @@ ORDER BY last_update DESC;''');
         ];
 
         for (final file in files) {
+          if (referenced.contains(file.path)) continue;
           if (await file.exists()) {
             await file.delete();
           }
@@ -302,6 +378,29 @@ ORDER BY last_update DESC;''');
         );
       } catch (_) {}
     }
+  }
+
+  /// Absolute paths of every image and attachment still referenced by a
+  /// message that exists. Used to keep cleanup from deleting a file that a
+  /// branched copy still points at.
+  Future<Set<String>> _referencedFilePaths() async {
+    final rows = await _db.query(
+      'messages',
+      columns: ['images', 'attachments'],
+      where: 'images IS NOT NULL OR attachments IS NOT NULL',
+    );
+
+    final paths = <String>{};
+    for (final row in rows) {
+      for (final file in _constructImages(row['images'] as String?) ?? const []) {
+        paths.add(file.path);
+      }
+      for (final file
+          in _constructAttachments(row['attachments'] as String?) ?? const []) {
+        paths.add(file.path);
+      }
+    }
+    return paths;
   }
 
   static List<File>? _constructImages(String? raw) {

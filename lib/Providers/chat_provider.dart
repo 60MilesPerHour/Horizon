@@ -288,6 +288,60 @@ class ChatProvider extends ChangeNotifier {
     return _chats[0];
   }
 
+  /// Forks the current chat at [message] into a new one and opens it.
+  ///
+  /// Everything up to and including [message] is copied; everything after it
+  /// is left behind. Use it to try a different question from a point in the
+  /// conversation without destroying the answer you already have — which is
+  /// what editing or regenerating does.
+  ///
+  /// The branch keeps the parent's model, provider, system prompt and options,
+  /// so the only difference is where the history stops.
+  Future<OllamaChat?> branchFromMessage(OllamaMessage message) async {
+    final source = currentChat;
+    if (source == null) return null;
+
+    final branch = await _databaseService.branchChat(
+      source,
+      throughMessageId: message.id,
+      newTitle: _branchTitle(source.title),
+    );
+
+    _chats.insert(0, branch);
+    _currentChatIndex = 0;
+    _messages = await _databaseService.getMessages(branch.id);
+    notifyListeners();
+    return branch;
+  }
+
+  /// "Title" -> "Title (2)" -> "Title (3)". Numbered rather than repeatedly
+  /// suffixed, so branching a branch doesn't produce
+  /// "Title (branch) (branch)".
+  static String _branchTitle(String title) {
+    final match = RegExp(r'^(.*) \((\d+)\)$').firstMatch(title);
+    if (match != null) {
+      final base = match.group(1)!;
+      final n = int.tryParse(match.group(2)!) ?? 1;
+      return '$base (${n + 1})';
+    }
+    return '$title (2)';
+  }
+
+  /// The chat a branch came from, if it still exists.
+  OllamaChat? parentOf(OllamaChat chat) {
+    final parentId = chat.parentChatId;
+    if (parentId == null) return null;
+    final index = _chats.indexWhere((c) => c.id == parentId);
+    return index == -1 ? null : _chats[index];
+  }
+
+  /// Opens the chat a branch was taken from. False if it's been deleted.
+  Future<bool> openParentOf(OllamaChat chat) async {
+    final parentId = chat.parentChatId;
+    if (parentId == null) return false;
+    return selectChatById(parentId);
+  }
+
   Future<void> updateCurrentChat({
     String? newModel,
     String? newTitle,
