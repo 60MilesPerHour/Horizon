@@ -118,8 +118,14 @@ cat > "$PKG/usr/share/metainfo/com.miles.horizon.metainfo.xml" <<'XML'
 XML
 
 # 6. Debian control file. Depends list = the runtime libraries Flutter
-#    Linux apps actually need, plus libsecret (flutter_secure_storage) and
-#    libsqlite3 (sqflite_common_ffi).
+#    Linux apps actually need, plus libsecret (flutter_secure_storage),
+#    libsqlite3 (sqflite_common_ffi) and GStreamer (audioplayers_linux, used
+#    to play ElevenLabs audio in voice mode). Without the GStreamer runtime
+#    the plugin's .so fails to load and the app won't start at all — the same
+#    class of packaging gap as the libsqlite3.so miss in v3.4.8.
+#    gstreamer1.0-plugins-good is a Recommends rather than a Depends: it
+#    carries the MP3 decoder, so without it voice playback is silent but
+#    everything else still works.
 INSTALLED_SIZE_KB=$(du -sk "$PKG/usr" | awk '{print $1}')
 cat > "$PKG/DEBIAN/control" <<CONTROL
 Package: horizon
@@ -128,8 +134,8 @@ Section: net
 Priority: optional
 Architecture: amd64
 Installed-Size: ${INSTALLED_SIZE_KB}
-Depends: libgtk-3-0, libblkid1, liblzma5, libstdc++6, libc6, libsqlite3-0, libsecret-1-0
-Recommends: gnome-keyring | kwalletmanager
+Depends: libgtk-3-0, libblkid1, liblzma5, libstdc++6, libc6, libsqlite3-0, libsecret-1-0, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
+Recommends: gnome-keyring | kwalletmanager, gstreamer1.0-plugins-good
 Maintainer: Miles Oldenburger <noreply@60milesperhour.dev>
 Homepage: https://github.com/60MilesPerHour/Horizon
 Description: Multi-provider AI chat client

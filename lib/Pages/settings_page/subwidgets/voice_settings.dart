@@ -335,7 +335,11 @@ class _VoiceSettingsState extends State<VoiceSettings> {
     final hasCurrent = _elevenLabsVoices.any((v) => v.id == currentId);
 
     return DropdownButtonFormField<String>(
-      initialValue: hasCurrent ? currentId : _elevenLabsVoices.first.id,
+      // `value`, not `initialValue`: CI pins Flutter 3.27, where the
+      // parameter had not been renamed yet. Local analysis flags it as
+      // deprecated, which is the right trade against a broken build.
+      // ignore: deprecated_member_use
+      value: hasCurrent ? currentId : _elevenLabsVoices.first.id,
       decoration: const InputDecoration(
         labelText: 'ElevenLabs voice',
         border: OutlineInputBorder(),
@@ -394,7 +398,9 @@ class _VoiceSettingsState extends State<VoiceSettings> {
 
         final value = locales.any((l) => l.id == current) ? current : '';
         return DropdownButtonFormField<String>(
-          initialValue: value,
+          // See the note on the voice picker above.
+          // ignore: deprecated_member_use
+          value: value,
           decoration: const InputDecoration(
             labelText: 'Speech recognition language',
             border: OutlineInputBorder(),

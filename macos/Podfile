@@ -1,4 +1,6 @@
-platform :osx, '10.15'
+# 11.0, not 10.15: speech_to_text's macOS pod declares an 11.00
+# deployment target and `pod install` hard-fails below it.
+platform :osx, '11.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
