@@ -125,7 +125,9 @@ XML
 #    class of packaging gap as the libsqlite3.so miss in v3.4.8.
 #    gstreamer1.0-plugins-good is a Recommends rather than a Depends: it
 #    carries the MP3 decoder, so without it voice playback is silent but
-#    everything else still works.
+#    everything else still works. Likewise pulseaudio-utils + ffmpeg, which
+#    record_linux shells out to (parecord | ffmpeg) for microphone capture —
+#    only needed for the Whisper/Scribe speech-to-text backends on desktop.
 INSTALLED_SIZE_KB=$(du -sk "$PKG/usr" | awk '{print $1}')
 cat > "$PKG/DEBIAN/control" <<CONTROL
 Package: horizon
@@ -135,7 +137,7 @@ Priority: optional
 Architecture: amd64
 Installed-Size: ${INSTALLED_SIZE_KB}
 Depends: libgtk-3-0, libblkid1, liblzma5, libstdc++6, libc6, libsqlite3-0, libsecret-1-0, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
-Recommends: gnome-keyring | kwalletmanager, gstreamer1.0-plugins-good
+Recommends: gnome-keyring | kwalletmanager, gstreamer1.0-plugins-good, pulseaudio-utils, ffmpeg
 Maintainer: Miles Oldenburger <noreply@60milesperhour.dev>
 Homepage: https://github.com/60MilesPerHour/Horizon
 Description: Multi-provider AI chat client

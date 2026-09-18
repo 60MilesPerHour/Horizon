@@ -4,8 +4,8 @@ import 'package:provider/provider.dart';
 
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
-import 'package:horizon/Services/voice/speech_recognition_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
+import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 import 'package:horizon/Services/voice/voice_session_controller.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
@@ -80,12 +80,10 @@ class _AssistantPageState extends State<AssistantPage> {
     final synthesis = context.read<SpeechSynthesisService>();
     final controller = VoiceSessionController(
       chatProvider: chatProvider,
-      recognition: context.read<SpeechRecognitionService>(),
+      recognition: context.read<SpeechInputService>(),
       synthesis: synthesis,
-    )
-      ..localeId = (settings.get('voice_locale') as String?) ?? ''
-      ..speakReplies =
-          settings.get('voice_speak_replies', defaultValue: true) as bool;
+    )..speakReplies =
+        settings.get('voice_speak_replies', defaultValue: true) as bool;
 
     setState(() {
       _controller = controller;
@@ -270,11 +268,24 @@ class _AssistantPageState extends State<AssistantPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32.0),
-          child: Text(
-            'Tap to talk',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Tap to talk',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              // Whisper and Scribe transcribe a finished clip, so there are no
+              // words to show while talking — without a level meter the screen
+              // looks frozen.
+              if (controller.phase == VoicePhase.listening &&
+                  controller.showsLevelMeter) ...[
+                const SizedBox(height: 24),
+                _LevelMeter(levels: controller.levels),
+              ],
+            ],
           ),
         ),
       );
@@ -342,6 +353,21 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   Widget _buildStatusLine(ThemeData theme, VoiceSessionController controller) {
+    // A silent fallback to the device recogniser has to be visible, or a
+    // misconfigured Whisper server just looks like worse accuracy.
+    final fallback = controller.fallbackNotice;
+    if (fallback != null && controller.phase != VoicePhase.listening) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Text(
+          fallback,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.tertiary),
+        ),
+      );
+    }
+
     final label = switch (controller.phase) {
       VoicePhase.listening => 'Listening…',
       VoicePhase.thinking => controller.activity ?? 'Thinking…',
@@ -355,6 +381,52 @@ class _AssistantPageState extends State<AssistantPage> {
       style: theme.textTheme.bodyMedium?.copyWith(
         color: theme.colorScheme.onSurfaceVariant,
       ),
+    );
+  }
+}
+
+/// Microphone level while a recording backend captures a turn.
+class _LevelMeter extends StatelessWidget {
+  final Stream<double> levels;
+
+  const _LevelMeter({required this.levels});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return StreamBuilder<double>(
+      stream: levels,
+      initialData: 0.0,
+      builder: (context, snapshot) {
+        final level = (snapshot.data ?? 0.0).clamp(0.0, 1.0);
+        return SizedBox(
+          height: 36,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: List.generate(7, (i) {
+              // Bars nearer the middle react first, so quiet speech still
+              // visibly moves something.
+              final threshold = (i - 3).abs() / 7.0;
+              final active = level > threshold;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3.0),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  width: 6,
+                  height: active ? 12 + level * 24 : 6,
+                  decoration: BoxDecoration(
+                    color: active
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              );
+            }),
+          ),
+        );
+      },
     );
   }
 }

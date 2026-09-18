@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'package:horizon/Providers/chat_provider.dart';
-import 'package:horizon/Services/voice/speech_recognition_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
+import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 
 enum VoicePhase {
   /// Nothing happening; tap to talk.
@@ -31,12 +31,12 @@ enum VoicePhase {
 /// anything said by voice is there in the chat list afterwards to read back.
 class VoiceSessionController extends ChangeNotifier {
   final ChatProvider _chatProvider;
-  final SpeechRecognitionService _recognition;
+  final SpeechInputService _recognition;
   final SpeechSynthesisService _synthesis;
 
   VoiceSessionController({
     required ChatProvider chatProvider,
-    required SpeechRecognitionService recognition,
+    required SpeechInputService recognition,
     required SpeechSynthesisService synthesis,
   })  : _chatProvider = chatProvider,
         _recognition = recognition,
@@ -56,9 +56,6 @@ class VoiceSessionController extends ChangeNotifier {
   /// The reply text as it arrives, for the on-screen caption.
   String reply = '';
 
-  /// Recognition locale, e.g. `en_US`. Empty uses the device default.
-  String localeId = '';
-
   /// Whether replies get read aloud at all. Off makes this a dictation box.
   bool speakReplies = true;
 
@@ -76,6 +73,19 @@ class VoiceSessionController extends ChangeNotifier {
 
   /// What the assistant is doing out-of-band, e.g. "Reading example.com…".
   String? get activity => _chatProvider.currentChatActivity;
+
+  /// Live microphone level, 0..1, while a recording backend is capturing.
+  /// Whisper and Scribe transcribe a finished clip, so there are no partial
+  /// words to show and this is the only sign the microphone is working.
+  Stream<double> get levels => _recognition.levels;
+
+  /// True when the active backend shows a level meter rather than live text.
+  bool get showsLevelMeter =>
+      !_recognition.effectiveBackend.hasPartialResults;
+
+  /// Set when the chosen backend wasn't usable and the device recogniser was
+  /// used for the last turn instead.
+  String? get fallbackNotice => _recognition.lastFallbackReason;
 
   @override
   void dispose() {
@@ -131,13 +141,15 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoicePhase.listening);
 
     final started = await _recognition.listen(
-      localeId: localeId,
       onResult: _onRecognitionResult,
+      onError: (message) {
+        error = message;
+        notifyListeners();
+      },
     );
 
     if (!started) {
-      error = _recognition.lastError ??
-          'Could not start listening. Check microphone permission.';
+      error ??= 'Could not start listening. Check microphone permission.';
       _setPhase(VoicePhase.error);
     }
   }
@@ -149,8 +161,10 @@ class VoiceSessionController extends ChangeNotifier {
 
     final prompt = text.trim();
     if (prompt.isEmpty) {
-      // Heard nothing. Silently return to idle rather than announcing it.
-      _setPhase(VoicePhase.idle);
+      // A remote backend reports a transcription failure by setting `error`
+      // and then handing back an empty final, so the two cases are told
+      // apart here: something broke, versus nobody said anything.
+      _setPhase(error == null ? VoicePhase.idle : VoicePhase.error);
       return;
     }
     unawaited(_send(prompt));

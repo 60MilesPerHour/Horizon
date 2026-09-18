@@ -9,10 +9,16 @@ import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Pages/main_page.dart';
 import 'package:horizon/Pages/ollama_models_page/ollama_models_page.dart';
 import 'package:horizon/Pages/settings_page/settings_page.dart';
+import 'package:horizon/Pages/settings_page/voice_settings_page.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/services.dart';
 import 'package:horizon/Services/voice/speech_recognition_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
+import 'package:horizon/Services/voice/stt/elevenlabs_transcriber.dart';
+import 'package:horizon/Services/voice/stt/speech_input_backend.dart';
+import 'package:horizon/Services/voice/stt/speech_input_service.dart';
+import 'package:horizon/Services/voice/stt/voice_recorder.dart';
+import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
 import 'package:horizon/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -84,6 +90,7 @@ void main() async {
   String? serpApiKey;
   String? openrouterKey;
   String? elevenLabsKey;
+  String? whisperKey;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
@@ -96,6 +103,7 @@ void main() async {
     serpApiKey = await storage.read(key: 'serpapi_api_key');
     openrouterKey = await storage.read(key: 'openrouter_api_key');
     elevenLabsKey = await storage.read(key: 'elevenlabs_api_key');
+    whisperKey = await storage.read(key: 'whisper_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -146,9 +154,23 @@ void main() async {
   );
   final toolService = ToolService(webSearch: webSearchService);
 
-  // Voice mode. The synthesiser holds config rather than reading Hive on each
-  // utterance, mirroring the chat services; Settings mutates it live.
+  // Voice mode. The services hold config rather than reading Hive on each
+  // utterance, mirroring the chat services; Settings mutates them live.
   final speechRecognition = SpeechRecognitionService();
+  final whisperTranscriber = WhisperTranscriber(
+    baseUrl: settingsBox.get('whisper_base_url') as String?,
+    model: settingsBox.get('whisper_model') as String?,
+    apiKey: whisperKey,
+  );
+  final elevenLabsTranscriber = ElevenLabsTranscriber(apiKey: elevenLabsKey);
+  final speechInput = SpeechInputService(
+    device: speechRecognition,
+    recorder: VoiceRecorder(),
+    whisper: whisperTranscriber,
+    elevenLabs: elevenLabsTranscriber,
+  )
+    ..backend = SttBackend.fromString(settingsBox.get('stt_backend') as String?)
+    ..localeId = (settingsBox.get('voice_locale') as String?) ?? '';
   final speechSynthesis = SpeechSynthesisService(
     engine: SpeechEngine.fromString(settingsBox.get('voice_engine') as String?),
     elevenLabsKey: elevenLabsKey,
@@ -170,6 +192,9 @@ void main() async {
         Provider(create: (_) => toolService),
         Provider(create: (_) => speechRecognition),
         Provider(create: (_) => speechSynthesis),
+        Provider(create: (_) => whisperTranscriber),
+        Provider(create: (_) => elevenLabsTranscriber),
+        Provider(create: (_) => speechInput),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
@@ -300,6 +325,12 @@ class _HorizonAppState extends State<HorizonApp> {
             // Launched by the assist gesture (autostart=1, so the mic opens
             // without a tap) or from the app's own voice button.
             final routeUri = Uri.tryParse(settings.name ?? '');
+            if (settings.name == '/settings/voice') {
+              return MaterialPageRoute(
+                builder: (context) => const VoiceSettingsPage(),
+              );
+            }
+
             if (routeUri?.path == '/assistant') {
               final autoStart = routeUri?.queryParameters['autostart'] == '1';
               return MaterialPageRoute(

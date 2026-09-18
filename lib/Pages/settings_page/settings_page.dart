@@ -43,7 +43,7 @@ class _SettingsPageContent extends StatelessWidget {
         SizedBox(height: 16),
         WebSearchSettings(),
         SizedBox(height: 16),
-        VoiceSettings(),
+        VoiceSettingsTile(),
         SizedBox(height: 16),
         ConfigBackupSettings(),
         SizedBox(height: 16),
