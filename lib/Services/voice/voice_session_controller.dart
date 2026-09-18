@@ -59,6 +59,24 @@ class VoiceSessionController extends ChangeNotifier {
   /// Whether replies get read aloud at all. Off makes this a dictation box.
   bool speakReplies = true;
 
+  /// Keep the conversation going: after a reply finishes, listen again
+  /// without waiting for a tap. This is what makes it a conversation rather
+  /// than a series of one-shot queries, and it's the default because tapping
+  /// between every turn is the main thing that makes voice feel like work.
+  ///
+  /// The mic is only open during a listening phase — never while thinking or
+  /// speaking — so it isn't always-on recording.
+  bool continuousMode = true;
+
+  /// Set when the loop stopped because nothing was said, so the UI can show
+  /// "still there?" rather than silently going idle.
+  bool endedOnSilence = false;
+
+  /// Consecutive turns that heard nothing. The loop stops after a couple so a
+  /// forgotten session doesn't sit with the mic open indefinitely.
+  int _silentTurns = 0;
+  static const int _maxSilentTurns = 2;
+
   /// How much of [reply] has already been handed to the synthesiser.
   int _spokenUpTo = 0;
 
@@ -109,6 +127,9 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> toggle() async {
     switch (_phase) {
       case VoicePhase.listening:
+        // Tapping while it listens means "I'm done" — finalise this turn and
+        // leave the loop, rather than dropping straight back into listening.
+        _leaving = true;
         await _recognition.stop();
       case VoicePhase.thinking:
       case VoicePhase.speaking:
@@ -129,7 +150,27 @@ class VoiceSessionController extends ChangeNotifier {
     await startListening();
   }
 
+  /// Set when the user has asked to stop, so the continuous loop doesn't
+  /// immediately reopen the microphone.
+  bool _leaving = false;
+
+  /// Ends the session: stops everything and leaves the loop.
+  Future<void> stopSession() async {
+    _leaving = true;
+    _awaitingReply = false;
+    await _synthesis.stop();
+    await _recognition.cancel();
+    _chatProvider.cancelCurrentStreaming();
+    _setPhase(VoicePhase.idle);
+  }
+
   Future<void> startListening() async {
+    if (_leaving) {
+      _leaving = false;
+      _setPhase(VoicePhase.idle);
+      return;
+    }
+
     // Never record while the device is talking, or the recogniser transcribes
     // the assistant's own voice back into the next prompt.
     await _synthesis.stop();
@@ -164,9 +205,23 @@ class VoiceSessionController extends ChangeNotifier {
       // A remote backend reports a transcription failure by setting `error`
       // and then handing back an empty final, so the two cases are told
       // apart here: something broke, versus nobody said anything.
-      _setPhase(error == null ? VoicePhase.idle : VoicePhase.error);
+      if (error != null) {
+        _setPhase(VoicePhase.error);
+        return;
+      }
+      _silentTurns++;
+      if (continuousMode && _silentTurns < _maxSilentTurns) {
+        // Heard nothing but the conversation is still open — listen again
+        // rather than making the user tap to retry.
+        unawaited(startListening());
+        return;
+      }
+      endedOnSilence = continuousMode;
+      _setPhase(VoicePhase.idle);
       return;
     }
+    _silentTurns = 0;
+    endedOnSilence = false;
     unawaited(_send(prompt));
   }
 
@@ -176,6 +231,8 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> sendText(String text) async {
     final prompt = text.trim();
     if (prompt.isEmpty || isBusy) return;
+    _leaving = false;
+    _silentTurns = 0;
 
     // Stop any residual playback first, or the previous answer talks over the
     // new one's opening sentence.
@@ -228,7 +285,15 @@ class VoiceSessionController extends ChangeNotifier {
     while (_synthesis.isSpeaking && _phase == VoicePhase.speaking) {
       await Future.delayed(const Duration(milliseconds: 120));
     }
-    if (_phase == VoicePhase.speaking) _setPhase(VoicePhase.idle);
+    if (_phase != VoicePhase.speaking) return; // interrupted or errored
+    _setPhase(VoicePhase.idle);
+
+    if (!continuousMode) return;
+    // A beat before reopening the mic: without it the recogniser catches the
+    // tail of the device's own audio and transcribes the assistant.
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (_phase != VoicePhase.idle) return; // user did something meanwhile
+    await startListening();
   }
 
   void _onChatChanged() {

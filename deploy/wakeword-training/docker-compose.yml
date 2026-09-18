@@ -9,6 +9,12 @@ services:
   train: &base
     build: .
     image: horizon-wakeword-training
+    # Docker gives a container 64 MB of /dev/shm. PyTorch's DataLoader passes
+    # tensors between worker processes through shared memory, and the training
+    # stage exceeds 64 MB immediately — the worker dies with "Bus error" and
+    # the run fails after the expensive clip generation has already happened.
+    # The host has 32 GB of shm; 8 is plenty.
+    shm_size: '8gb'
     volumes:
       - ./out:/out
       - ./data:/data

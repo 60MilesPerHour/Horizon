@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
@@ -89,6 +91,11 @@ class _AssistantPageState extends State<AssistantPage> {
       _controller = controller;
       _preparing = false;
     });
+
+    // Warm the recogniser now rather than on the first tap: initialise() is a
+    // platform round-trip plus a permission check, and paying for it when the
+    // user taps is exactly the delay they notice.
+    unawaited(context.read<SpeechInputService>().device.prewarm());
 
     if (widget.autoStart) await controller.startListening();
   }
@@ -247,13 +254,39 @@ class _AssistantPageState extends State<AssistantPage> {
           children: [
             Expanded(child: _buildTranscript(theme, controller)),
             if (_showComposer) _buildComposer(theme, controller),
-            _buildStatusLine(theme, controller),
-            const SizedBox(height: 12),
-            _MicButton(
-              phase: controller.phase,
-              onPressed: controller.toggle,
+            // Every element below the transcript has a fixed height. The mic
+            // used to drift as the status text rewrapped between phases and
+            // as the level meter appeared, which reads as the button moving
+            // around under your thumb.
+            SizedBox(
+              height: 34,
+              child: Center(child: _buildStatusLine(theme, controller)),
             ),
-            const SizedBox(height: 32),
+            SizedBox(
+              height: 132,
+              child: Center(
+                child: _VoiceOrb(
+                  phase: controller.phase,
+                  levels: controller.showsLevelMeter ? controller.levels : null,
+                  onTap: controller.toggle,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 44,
+              child: controller.continuousMode &&
+                      controller.phase != VoicePhase.idle
+                  ? TextButton.icon(
+                      onPressed: () async {
+                        await controller.stopSession();
+                        if (mounted) setState(() {});
+                      },
+                      icon: const Icon(Icons.close, size: 18),
+                      label: const Text('End'),
+                    )
+                  : null,
+            ),
+            const SizedBox(height: 12),
           ],
         );
       },
@@ -277,14 +310,9 @@ class _AssistantPageState extends State<AssistantPage> {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              // Whisper and Scribe transcribe a finished clip, so there are no
-              // words to show while talking — without a level meter the screen
-              // looks frozen.
-              if (controller.phase == VoicePhase.listening &&
-                  controller.showsLevelMeter) ...[
-                const SizedBox(height: 24),
-                _LevelMeter(levels: controller.levels),
-              ],
+              // The microphone level now drives the orb's halo instead of a
+              // separate meter here — a widget that appeared and disappeared
+              // in this column is what made everything below it jump.
             ],
           ),
         ),
@@ -373,11 +401,15 @@ class _AssistantPageState extends State<AssistantPage> {
       VoicePhase.thinking => controller.activity ?? 'Thinking…',
       VoicePhase.speaking => 'Speaking — tap to interrupt',
       VoicePhase.error => 'Tap to try again',
-      VoicePhase.idle => 'Tap to talk',
+      VoicePhase.idle => controller.endedOnSilence
+          ? "Didn't catch anything — tap to start again"
+          : (controller.continuousMode ? 'Tap to start talking' : 'Tap to talk'),
     };
 
     return Text(
       label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
       style: theme.textTheme.bodyMedium?.copyWith(
         color: theme.colorScheme.onSurfaceVariant,
       ),
@@ -385,105 +417,150 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 }
 
-/// Microphone level while a recording backend captures a turn.
-class _LevelMeter extends StatelessWidget {
-  final Stream<double> levels;
+/// The single control: an orb that reacts in place rather than moving.
+///
+/// One widget for all phases, at a constant footprint, because the previous
+/// version changed size and sat under content whose height changed with the
+/// phase — so it visibly drifted under your thumb between turns. Everything
+/// here animates scale and colour inside a fixed box.
+class _VoiceOrb extends StatefulWidget {
+  final VoicePhase phase;
 
-  const _LevelMeter({required this.levels});
+  /// Microphone level, when the active backend has no partial words to show.
+  final Stream<double>? levels;
+
+  final VoidCallback onTap;
+
+  const _VoiceOrb({
+    required this.phase,
+    required this.onTap,
+    this.levels,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return StreamBuilder<double>(
-      stream: levels,
-      initialData: 0.0,
-      builder: (context, snapshot) {
-        final level = (snapshot.data ?? 0.0).clamp(0.0, 1.0);
-        return SizedBox(
-          height: 36,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(7, (i) {
-              // Bars nearer the middle react first, so quiet speech still
-              // visibly moves something.
-              final threshold = (i - 3).abs() / 7.0;
-              final active = level > threshold;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3.0),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  width: 6,
-                  height: active ? 12 + level * 24 : 6,
-                  decoration: BoxDecoration(
-                    color: active
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              );
-            }),
-          ),
-        );
-      },
-    );
-  }
+  State<_VoiceOrb> createState() => _VoiceOrbState();
 }
 
-/// The one control: a large target that changes colour and icon with phase.
-class _MicButton extends StatelessWidget {
-  final VoicePhase phase;
-  final VoidCallback onPressed;
+class _VoiceOrbState extends State<_VoiceOrb>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  StreamSubscription<double>? _levelSub;
+  double _level = 0;
 
-  const _MicButton({required this.phase, required this.onPressed});
+  static const double _size = 104;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _syncPulse();
+    _subscribeLevels();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceOrb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.phase != widget.phase) _syncPulse();
+    if (oldWidget.levels != widget.levels) _subscribeLevels();
+  }
+
+  void _subscribeLevels() {
+    _levelSub?.cancel();
+    _levelSub = widget.levels?.listen((value) {
+      if (mounted) setState(() => _level = value.clamp(0.0, 1.0));
+    });
+  }
+
+  /// Thinking and speaking pulse continuously; listening and idle don't, so
+  /// motion means "working" rather than being constant decoration.
+  void _syncPulse() {
+    final shouldPulse = widget.phase == VoicePhase.thinking ||
+        widget.phase == VoicePhase.speaking;
+    if (shouldPulse && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (!shouldPulse && _pulse.isAnimating) {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _levelSub?.cancel();
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final (IconData icon, Color background) = switch (phase) {
+    final (IconData icon, Color colour) = switch (widget.phase) {
       VoicePhase.listening => (Icons.mic, theme.colorScheme.primary),
-      VoicePhase.thinking => (Icons.more_horiz, theme.colorScheme.secondary),
-      VoicePhase.speaking => (Icons.stop_rounded, theme.colorScheme.secondary),
-      VoicePhase.error => (Icons.refresh, theme.colorScheme.errorContainer),
+      VoicePhase.thinking => (Icons.auto_awesome, theme.colorScheme.tertiary),
+      VoicePhase.speaking => (Icons.graphic_eq, theme.colorScheme.secondary),
+      VoicePhase.error => (Icons.refresh, theme.colorScheme.error),
       VoicePhase.idle => (Icons.mic_none, theme.colorScheme.primaryContainer),
     };
 
-    final foreground = ThemeData.estimateBrightnessForColor(background) ==
-            Brightness.dark
-        ? Colors.white
-        : Colors.black87;
+    final foreground =
+        ThemeData.estimateBrightnessForColor(colour) == Brightness.dark
+            ? Colors.white
+            : Colors.black87;
 
     return Semantics(
       button: true,
-      label: switch (phase) {
+      label: switch (widget.phase) {
         VoicePhase.listening => 'Stop listening',
         VoicePhase.thinking || VoicePhase.speaking => 'Interrupt',
         _ => 'Start listening',
       },
       child: GestureDetector(
-        onTap: onPressed,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          width: 96,
-          height: 96,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: background,
-            boxShadow: phase == VoicePhase.listening
-                ? [
-                    BoxShadow(
-                      color: background.withValues(alpha: 0.4),
-                      blurRadius: 24,
-                      spreadRadius: 6,
-                    )
-                  ]
-                : null,
+        onTap: widget.onTap,
+        // The fixed box is what keeps the orb still: the halo grows into the
+        // padding instead of pushing anything around.
+        child: SizedBox(
+          width: _size + 28,
+          height: _size + 28,
+          child: AnimatedBuilder(
+            animation: _pulse,
+            builder: (context, _) {
+              // While listening, the halo follows the microphone. While
+              // thinking or speaking it breathes on the animation clock.
+              final energy = widget.phase == VoicePhase.listening
+                  ? _level
+                  : (_pulse.isAnimating ? _pulse.value : 0.0);
+
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: _size + 8 + energy * 20,
+                    height: _size + 8 + energy * 20,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: colour.withValues(alpha: 0.18 + energy * 0.22),
+                    ),
+                  ),
+                  Container(
+                    width: _size,
+                    height: _size,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: colour,
+                    ),
+                    child: Icon(icon, size: 42, color: foreground),
+                  ),
+                ],
+              );
+            },
           ),
-          child: Icon(icon, size: 40, color: foreground),
         ),
       ),
     );
   }
 }
+

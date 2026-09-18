@@ -589,6 +589,13 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// True for the leading half of a UTF-16 surrogate pair.
+  ///
+  /// Non-BMP characters — emoji, most notably — are two code units, and any
+  /// index-based split can land between them.
+  static bool _isHighSurrogate(int codeUnit) =>
+      codeUnit >= 0xD800 && codeUnit <= 0xDBFF;
+
   /// Whether [error] is a provider complaining that the model can't use tools,
   /// as opposed to any other 400. Matched on text because none of the four
   /// providers expose a machine-readable code for it.
@@ -658,7 +665,14 @@ class ChatProvider extends ChangeNotifier {
         // arrivals can drop thousands of characters at once, and the old cap
         // of 48 left a backlog that then snapped onto screen all at once at
         // stream end. 160 drains a 4K burst in ~1s while still animating.
-        final n = (s.length ~/ 4).clamp(2, 160);
+        var n = (s.length ~/ 4).clamp(2, 160);
+        // Don't cut between the halves of a surrogate pair. `substring` works
+        // on UTF-16 code units, so slicing an emoji down the middle emits a
+        // lone surrogate — which renders as the unknown-glyph box for one
+        // frame until the next tick appends its partner and repairs it.
+        // Leaving the pair in `pending` costs one tick and never glitches.
+        if (n < s.length && _isHighSurrogate(s.codeUnitAt(n - 1))) n -= 1;
+        if (n <= 0) return;
         streamingMessage.content += s.substring(0, n);
         if (n < s.length) pending.write(s.substring(n));
         // Update only the ValueNotifier — avoids a full-page rebuild.

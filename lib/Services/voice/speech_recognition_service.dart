@@ -26,12 +26,25 @@ class SpeechRecognitionService {
   /// better than a mic button that does nothing.
   String? lastError;
 
-  /// How long to keep listening with no speech before giving up.
-  static const Duration _listenTimeout = Duration(seconds: 30);
+  /// Hard ceiling on one turn. Only reached if our own endpointing and the
+  /// platform's both fail; the real end-of-turn detection is [_silenceWindow].
+  static const Duration _listenTimeout = Duration(seconds: 45);
 
-  /// How much trailing silence ends the turn. Short enough to feel responsive,
-  /// long enough to survive someone pausing to think mid-sentence.
-  static const Duration _pauseTimeout = Duration(seconds: 3);
+  /// What we ask the platform for. Android's SpeechRecognizer treats this as
+  /// a hint and frequently ignores it outright, which is why it can't be
+  /// relied on — see [_silenceWindow].
+  static const Duration _pauseTimeout = Duration(seconds: 2);
+
+  /// How long the transcript must stop changing before we call the turn over.
+  ///
+  /// This is the endpointing that actually works. Android's `pauseFor` is
+  /// widely ignored, so a turn would run to `listenFor` — 30 seconds of dead
+  /// air after you stopped talking. Watching the partial results go quiet is
+  /// independent of the platform honouring anything.
+  static const Duration _silenceWindow = Duration(milliseconds: 1100);
+
+  Timer? _silenceTimer;
+  String _lastTranscript = '';
 
   /// Prepares the recogniser and asks for microphone permission. Safe to call
   /// repeatedly; the underlying plugin only initialises once.
@@ -94,10 +107,29 @@ class SpeechRecognitionService {
     if (_speech.isListening) return true;
 
     lastError = null;
+    _lastTranscript = '';
+    _silenceTimer?.cancel();
+
     try {
       await _speech.listen(
         onResult: (SpeechRecognitionResult result) {
-          onResult(result.recognizedWords, result.finalResult);
+          final words = result.recognizedWords;
+
+          // Restart the silence countdown whenever the transcript grows.
+          if (words != _lastTranscript) {
+            _lastTranscript = words;
+            _silenceTimer?.cancel();
+            if (words.trim().isNotEmpty) {
+              _silenceTimer = Timer(_silenceWindow, () {
+                // stop() finalises the turn, which delivers a result with
+                // isFinal set through this same callback.
+                unawaited(stop());
+              });
+            }
+          }
+
+          if (result.finalResult) _silenceTimer?.cancel();
+          onResult(words, result.finalResult);
         },
         listenOptions: SpeechListenOptions(
           // Dictation-style: keep going through short pauses and give us
@@ -122,6 +154,7 @@ class SpeechRecognitionService {
 
   /// Ends the turn and keeps whatever was heard.
   Future<void> stop() async {
+    _silenceTimer?.cancel();
     try {
       if (_speech.isListening) await _speech.stop();
     } catch (_) {}
@@ -129,10 +162,19 @@ class SpeechRecognitionService {
 
   /// Ends the turn and discards what was heard.
   Future<void> cancel() async {
+    _silenceTimer?.cancel();
     try {
       if (_speech.isListening) await _speech.cancel();
     } catch (_) {}
   }
+
+  /// Gets the platform recogniser ready before it's needed.
+  ///
+  /// First-time [initialize] involves a platform round-trip and a permission
+  /// check; doing it when the voice screen opens rather than on the first tap
+  /// is the difference between the mic being live immediately and a visible
+  /// delay.
+  Future<void> prewarm() => initialize();
 
   /// Locales the device can recognise.
   Future<List<({String id, String name})>> locales() async {

@@ -252,6 +252,13 @@ def main() -> int:
                              "needs the phrase said more clearly "
                              "(default: %(default)s)")
     parser.add_argument("--music-hours", type=int, default=1)
+    parser.add_argument(
+        "--stages", default="generate,augment,train",
+        help="comma-separated subset of generate,augment,train. Clip "
+             "generation and augmentation write ~2.4 GB under the output "
+             "directory and take most of the wall clock, so a failure in the "
+             "training stage shouldn't mean redoing them. "
+             "(default: %(default)s)")
     args = parser.parse_args()
 
     phrase = validate_phrase(args.phrase)
@@ -289,8 +296,17 @@ def main() -> int:
     print(f"Wrote training config to {config_path}")
 
     trainer = str(OWW / "openwakeword" / "train.py")
-    for stage in ("--generate_clips", "--augment_clips", "--train_model"):
-        run([sys.executable, trainer, "--training_config", str(config_path), stage])
+    requested = {s.strip() for s in args.stages.split(",") if s.strip()}
+    stages = [
+        ("generate", "--generate_clips"),
+        ("augment", "--augment_clips"),
+        ("train", "--train_model"),
+    ]
+    for name, flag in stages:
+        if name not in requested:
+            print(f"Skipping {name} (not in --stages)")
+            continue
+        run([sys.executable, trainer, "--training_config", str(config_path), flag])
 
     # ONNX -> tflite. `-kat onnx____Flatten_0` names the graph input to keep as
     # a channel-last tensor; it's the input openWakeWord's exporter produces.
