@@ -28,8 +28,12 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Horizon needs the microphone for voice mode, so you can talk to a model instead of typing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Horizon needs access to your photo library to let you select images to send in chats.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Horizon uses speech recognition to turn what you say in voice mode into text for the model.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -1,5 +1,8 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# Matches IPHONEOS_DEPLOYMENT_TARGET in the Xcode project. Declared here too
+# because CocoaPods otherwise defaults the pods to iOS 12, and speech_to_text
+# (voice mode) needs 13 — the mismatch fails the pod install rather than the
+# build, which reads like a broken Podfile instead of a version floor.
+platform :ios, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'

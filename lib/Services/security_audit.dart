@@ -88,6 +88,7 @@ class SecurityAuditInputs {
     required this.homeAssistantUrl,
     required this.homeAssistantConfigured,
     required this.sharedChatCount,
+    required this.sharedCloudChatCount,
   });
 
   final String ollamaAddress;
@@ -118,6 +119,10 @@ class SecurityAuditInputs {
 
   /// How many chats are opted in to `search_chats`.
   final int sharedChatCount;
+
+  /// How many of those run on a hosted model, and are therefore the only ones
+  /// a hosted chat is allowed to search.
+  final int sharedCloudChatCount;
 }
 
 /// Builds the "what goes where" list for the Security & Privacy page.
@@ -415,6 +420,7 @@ class SecurityAudit {
     ));
 
     // ---------------- Cross-chat ----------------
+    final localShared = input.sharedChatCount - input.sharedCloudChatCount;
     entries.add(EgressEntry(
       name: 'Shared conversations',
       trust: EgressTrust.onDevice,
@@ -425,9 +431,16 @@ class SecurityAudit {
           ? 'No chat is shared, so search_chats is not offered to any model.'
           : '${input.sharedChatCount} chat'
               '${input.sharedChatCount == 1 ? '' : 's'} can be searched by the '
-              'assistant. The search itself is local, but any excerpt it '
-              "returns is sent to that chat's model as part of the answer.",
-      note: 'Per chat, in Configure Chat → Share with assistant.',
+              'assistant: $localShared on a local model, '
+              '${input.sharedCloudChatCount} on a hosted one. The search runs '
+              'locally, but an excerpt it returns becomes part of the request '
+              "to that chat's model.",
+      note: input.sharedCloudChatCount > 0 || localShared > 0
+          ? 'A chat on a hosted model can only search other hosted chats — '
+              'your local conversations are never excerpted into a request '
+              'that leaves the device. Set per chat, in Configure Chat → '
+              'Share with assistant.'
+          : 'Per chat, in Configure Chat → Share with assistant.',
     ));
 
     return entries;

@@ -226,10 +226,52 @@ jobs:
           path: horizon-windows.zip
           retention-days: 30
 
-  # Publish a GitHub Release with all four platform artifacts whenever a
-  # v* tag is pushed. Tag a release with: git tag vX.Y.Z && git push --tags
+  # Unsigned IPA for sideloading. There is no Apple Developer account behind
+  # this repo, so the .app is packaged as an IPA without a signature and the
+  # user signs it themselves (SideStore, Sideloadly, AltStore) with a free
+  # Apple ID — which means a 7-day expiry and a re-sign, not a broken build.
+  #
+  # continue-on-error because iOS is the one target nobody here can test on a
+  # device: an Xcode or pod failure must not take down a release that is
+  # otherwise good on four platforms. The release job copies the IPA only if
+  # this job produced one.
+  ios:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build iOS (unsigned)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Payload as an IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          # An IPA is a zip with the .app inside a top-level Payload/ — the
+          # signing tools reject anything else, however valid the archive.
+          zip -qry horizon-ios.ipa Payload
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-ios
+          path: horizon-ios.ipa
+          retention-days: 30
+
+  # Publish a GitHub Release with the platform artifacts whenever a v* tag is
+  # pushed. Tag a release with: git tag vX.Y.Z && git push --tags
   release:
-    needs: [ android, macos, linux, windows ]
+    needs: [ android, macos, linux, windows, ios ]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -249,6 +291,13 @@ jobs:
           cp artifacts/horizon-windows/horizon-windows.zip "release/horizon-${TAG}-windows.zip"
           # Linux .deb and tarball are already versioned by package-deb.sh.
           cp artifacts/horizon-linux/* release/
+          # iOS is best-effort: the job can fail without failing the release,
+          # so the artifact may legitimately not be here.
+          if [ -f artifacts/horizon-ios/horizon-ios.ipa ]; then
+            cp artifacts/horizon-ios/horizon-ios.ipa "release/horizon-${TAG}.ipa"
+          else
+            echo "No iOS artifact this run — releasing without it."
+          fi
           ls -la release/
 
       - name: Create GitHub Release

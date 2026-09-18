@@ -623,6 +623,7 @@ class ChatProvider extends ChangeNotifier {
         final result = await _toolService.execute(
           call,
           currentChatId: associatedChat.id,
+          currentChatProvider: effectiveChat.provider,
         );
         final message = OllamaMessage.toolResult(call: call, result: result);
         results.add(message);
@@ -900,7 +901,7 @@ class ChatProvider extends ChangeNotifier {
       final native = service.supportsTools && _modelSupportsTools(chat);
 
       if (native) {
-        tools = _toolService.availableTools();
+        tools = _toolService.availableTools(chatProvider: chat.provider);
         if (tools.isNotEmpty) systemAddon += ToolConstants.systemPromptAddon;
       } else if (_webSearch.isConfigured) {
         systemAddon += WebSearchConstants.systemPromptAddon;

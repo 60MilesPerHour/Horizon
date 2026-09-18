@@ -220,7 +220,10 @@ class ToolService {
   /// offered when a search backend is actually configured — declaring a tool
   /// we can't run invites the model to call it and then apologise, which reads
   /// as a bug to the user.
-  List<ToolDefinition> availableTools() {
+  /// [chatProvider] is the provider of the chat the tools are being offered
+  /// to: `search_chats` is withheld from a hosted chat when every shared
+  /// conversation is local, since it could only ever come back empty.
+  List<ToolDefinition> availableTools({String? chatProvider}) {
     final tools = <ToolDefinition>[_currentTimeTool];
     if (_webSearch.isConfigured) {
       tools.insert(0, _webSearchTool);
@@ -232,7 +235,7 @@ class ToolService {
     }
     // Only when a chat is actually shared: a tool whose every answer is
     // "nothing is shared with me" is worse than no tool at all.
-    if (_chatSearch?.isConfigured == true) {
+    if (_chatSearch?.isConfiguredFor(chatProvider) == true) {
       tools.add(_searchChatsTool);
     }
     if (_homeAssistant?.isConfigured == true) {
@@ -290,7 +293,11 @@ class ToolService {
   /// [currentChatId] is excluded from `search_chats`: the model can already
   /// see the conversation it's in, and matching it would spend the result
   /// budget on text that's in the prompt anyway.
-  Future<ToolResult> execute(ToolCall call, {String? currentChatId}) async {
+  Future<ToolResult> execute(
+    ToolCall call, {
+    String? currentChatId,
+    String? currentChatProvider,
+  }) async {
     try {
       switch (call.name) {
         case 'web_search':
@@ -300,7 +307,11 @@ class ToolService {
         case 'current_time':
           return _runCurrentTime();
         case 'search_chats':
-          return await _runSearchChats(call.arguments, currentChatId);
+          return await _runSearchChats(
+            call.arguments,
+            currentChatId,
+            currentChatProvider,
+          );
         case 'ha_list_entities':
           return await _runHaListEntities(call.arguments);
         case 'ha_get_state':
@@ -442,6 +453,7 @@ class ToolService {
   Future<ToolResult> _runSearchChats(
     Map<String, dynamic> args,
     String? currentChatId,
+    String? currentChatProvider,
   ) async {
     final search = _chatSearch;
     if (search == null || !search.isConfigured) {
@@ -449,6 +461,14 @@ class ToolService {
         'No conversations are shared with the assistant. Tell the user they '
         "can share one from that chat's Configure Chat sheet, under "
         '"Share with assistant".',
+      );
+    }
+    if (!search.isConfiguredFor(currentChatProvider)) {
+      return ToolResult.error(
+        'Every shared conversation runs on a local model, and this chat is on '
+        'a hosted one, so none of them can be searched from here — their '
+        'contents would have to be sent to the provider. Tell the user that, '
+        'and that asking from a local chat would work.',
       );
     }
 
@@ -463,6 +483,7 @@ class ToolService {
     final formatted = await search.searchFormatted(
       query,
       excludeChatId: currentChatId,
+      askingProvider: currentChatProvider,
     );
     if (formatted == null) {
       return ToolResult(

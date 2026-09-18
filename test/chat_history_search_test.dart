@@ -30,6 +30,7 @@ void main() async {
   late OllamaChat shared;
   late OllamaChat private;
   late OllamaChat current;
+  late OllamaChat cloud;
 
   setUp(() async {
     final dir = Platform.isLinux
@@ -52,6 +53,13 @@ void main() async {
     current.options.bridge = true;
     await database.updateChat(current, newTitle: 'Assistant');
 
+    cloud = await database.createChat(
+      'anthropic/claude-sonnet-4.5',
+      provider: 'openrouter',
+    );
+    cloud.options.bridge = true;
+    await database.updateChat(cloud, newTitle: 'Cloud notes');
+
     await database.addMessage(
       OllamaMessage('the oil filter for the mazda is a Wix 57055',
           role: OllamaMessageRole.user),
@@ -69,6 +77,11 @@ void main() async {
       OllamaMessage('what was that mazda filter again',
           role: OllamaMessageRole.user),
       chat: current,
+    );
+    await database.addMessage(
+      OllamaMessage('the mazda is due for an inspection in March',
+          role: OllamaMessageRole.user),
+      chat: cloud,
     );
 
     // Re-read so the chats carry the persisted options, then hand the live
@@ -125,6 +138,65 @@ void main() async {
     expect(untouched.options.bridge, isFalse);
   });
 
+  group('the local-to-cloud rule', () {
+    test('a hosted chat cannot reach a local chat', () async {
+      // The whole point: sharing a chat is consent to being searched, not
+      // consent to being uploaded to whoever serves the model.
+      final result = await search.searchFormatted(
+        'mazda oil filter',
+        askingProvider: 'openrouter',
+      );
+      expect(result, isNot(contains('Wix 57055')));
+    });
+
+    test('a hosted chat can still reach other hosted chats', () async {
+      final result = await search.searchFormatted(
+        'mazda inspection',
+        askingProvider: 'openrouter',
+      );
+      expect(result, contains('inspection in March'));
+    });
+
+    test('a local chat can reach everything', () async {
+      final result = await search.searchFormatted(
+        'mazda oil filter',
+        askingProvider: 'ollama',
+      );
+      expect(result, contains('Wix 57055'));
+    });
+
+    test('the model is told when chats were withheld', () async {
+      // Otherwise it reports "I found nothing" as though it had looked
+      // everywhere, which is a subtly false answer.
+      final result = await search.searchFormatted(
+        'mazda inspection',
+        askingProvider: 'openrouter',
+      );
+      expect(result, contains('cannot be searched from a hosted one'));
+    });
+
+    test('nothing is withheld from a local chat, so nothing is mentioned',
+        () async {
+      final result = await search.searchFormatted(
+        'mazda oil filter',
+        askingProvider: 'ollama',
+      );
+      expect(result, isNot(contains('cannot be searched')));
+    });
+
+    test('the tool is withheld entirely when only local chats are shared',
+        () async {
+      final localOnly = ChatHistorySearch(database: database)
+        ..chatsSource = () => [shared];
+      expect(localOnly.isConfiguredFor('ollama'), isTrue);
+      expect(localOnly.isConfiguredFor('openrouter'), isFalse);
+    });
+
+    test('a hosted chat with a hosted share keeps the tool', () {
+      expect(search.isConfiguredFor('openrouter'), isTrue);
+    });
+  });
+
   _haUrlTests();
 
   group('tool declaration', () {
@@ -134,7 +206,7 @@ void main() async {
         chatSearch: search,
       );
       expect(
-        withShared.availableTools().map((t) => t.name),
+        withShared.availableTools(chatProvider: 'ollama').map((t) => t.name),
         contains('search_chats'),
       );
 
@@ -144,7 +216,7 @@ void main() async {
           ..chatsSource = () => [private],
       );
       expect(
-        withoutShared.availableTools().map((t) => t.name),
+        withoutShared.availableTools(chatProvider: 'ollama').map((t) => t.name),
         isNot(contains('search_chats')),
       );
     });

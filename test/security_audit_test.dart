@@ -21,6 +21,7 @@ SecurityAuditInputs inputs({
   String homeAssistantUrl = '',
   bool homeAssistantConfigured = false,
   int sharedChatCount = 0,
+  int sharedCloudChatCount = 0,
 }) {
   return SecurityAuditInputs(
     ollamaAddress: ollamaAddress,
@@ -41,6 +42,7 @@ SecurityAuditInputs inputs({
     homeAssistantUrl: homeAssistantUrl,
     homeAssistantConfigured: homeAssistantConfigured,
     sharedChatCount: sharedChatCount,
+    sharedCloudChatCount: sharedCloudChatCount,
   );
 }
 
@@ -244,14 +246,25 @@ void main() {
       expect(entry.sends, contains('No chat is shared'));
     });
 
-    test('counts them, and says excerpts reach the model', () {
+    test('counts them, split by where they run', () {
       final entry = entryNamed(
-        SecurityAudit.build(inputs(sharedChatCount: 3)),
+        SecurityAudit.build(
+          inputs(sharedChatCount: 3, sharedCloudChatCount: 1),
+        ),
         'Shared conversations',
       );
       expect(entry.status, EgressStatus.active);
       expect(entry.sends, contains('3 chats'));
-      expect(entry.sends, contains('sent to'));
+      expect(entry.sends, contains('2 on a local model'));
+      expect(entry.sends, contains('1 on a hosted one'));
+    });
+
+    test('states the rule that keeps local chats off the wire', () {
+      final entry = entryNamed(
+        SecurityAudit.build(inputs(sharedChatCount: 2)),
+        'Shared conversations',
+      );
+      expect(entry.note, contains('can only search other hosted chats'));
     });
   });
 

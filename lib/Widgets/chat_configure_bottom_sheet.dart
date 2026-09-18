@@ -797,7 +797,9 @@ class _BridgeTile extends StatelessWidget {
         title: const Text('Share with assistant'),
         subtitle: Text(
           'Let your other chats — including voice mode — search this one when '
-          'they need something you discussed here.',
+          'they need something you discussed here. A chat on a hosted model '
+          'can only search other hosted chats, so nothing local is excerpted '
+          'into a request that leaves the device.',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

@@ -12,6 +12,20 @@ import 'package:horizon/Services/database_service.dart';
 ///
 /// Scope is opt-in per chat ([OllamaChatOptions.bridge]). A chat that isn't
 /// bridged is invisible to this, which is the whole point of the switch.
+///
+/// On top of that there is one rule the user can't switch off: **a chat
+/// running on a hosted model can only search other hosted chats.** Sharing a
+/// chat is consent to being searched, not consent to being uploaded, and
+/// without it a local Ollama conversation shared for the assistant's benefit
+/// would get excerpted into an OpenRouter request and leave the machine.
+/// Local chats can search everything, because nothing leaves.
+///
+/// On top of that there is one rule the user can't switch off: **a chat
+/// running on a hosted model can only search other hosted chats.** Sharing a
+/// chat is consent to being searched, not consent to being uploaded, and
+/// without this a local Ollama conversation shared for the assistant's
+/// benefit would get excerpted into an OpenRouter request and leave the
+/// machine. Local chats can search everything, because nothing leaves.
 class ChatHistorySearch {
   ChatHistorySearch({required DatabaseService database}) : _database = database;
 
@@ -34,13 +48,41 @@ class ChatHistorySearch {
   List<OllamaChat> get bridgedChats =>
       (chatsSource?.call() ?? const <OllamaChat>[]).where((chat) => chat.options.bridge).toList();
 
-  /// Whether the tool is worth declaring at all.
+  /// Whether a chat on [askingProvider] stays on the device. Anything that
+  /// isn't Ollama is somebody else's server.
+  static bool isLocalProvider(String? provider) =>
+      provider == null || provider == 'ollama';
+
+  /// The shared chats a chat on [askingProvider] is allowed to search.
+  ///
+  /// A hosted chat gets only the hosted ones. Hard rule, not a setting: the
+  /// failure it prevents is silent and unrecoverable — the excerpt is already
+  /// at the provider by the time anyone notices — and a switch labelled "yes,
+  /// send my local chats to the cloud" is one nobody reads correctly.
+  List<OllamaChat> searchableFor(String? askingProvider) {
+    final bridged = bridgedChats;
+    if (isLocalProvider(askingProvider)) return bridged;
+    return bridged.where((chat) => !isLocalProvider(chat.provider)).toList();
+  }
+
+  /// Whether any chat is shared at all. The privacy page reports this total
+  /// rather than one asker's view of it.
   bool get isConfigured => bridgedChats.isNotEmpty;
+
+  /// Whether the tool is worth declaring to a chat on [askingProvider].
+  bool isConfiguredFor(String? askingProvider) =>
+      searchableFor(askingProvider).isNotEmpty;
 
   /// Runs the search and formats it for the model, or returns null when there
   /// is nothing to search.
-  Future<String?> searchFormatted(String query, {String? excludeChatId}) async {
-    final chats = bridgedChats.where((chat) => chat.id != excludeChatId).toList();
+  Future<String?> searchFormatted(
+    String query, {
+    String? excludeChatId,
+    String? askingProvider,
+  }) async {
+    final allowed = searchableFor(askingProvider);
+    final chats = allowed.where((chat) => chat.id != excludeChatId).toList();
+    final withheld = bridgedChats.length - allowed.length;
     if (chats.isEmpty) return null;
 
     final terms = _terms(query);
@@ -49,7 +91,8 @@ class ChatHistorySearch {
     final hits = await _database.searchMessages(chatIds: chats.map((c) => c.id).toList(), terms: terms, limit: maxHits);
     if (hits.isEmpty) {
       return 'No messages in the shared conversations '
-          '(${chats.map((c) => '"${c.title}"').join(', ')}) match "$query".';
+          '(${chats.map((c) => '"${c.title}"').join(', ')}) match "$query".'
+          '${_withheldNote(withheld)}';
     }
 
     final buffer = StringBuffer(
@@ -62,7 +105,18 @@ class ChatHistorySearch {
       buffer.writeln('[${hit.chatTitle} · ${_formatDate(hit.timestamp)} · $who]');
       buffer.writeln(_excerpt(hit.content, terms));
     }
+    buffer.write(_withheldNote(withheld));
     return buffer.toString();
+  }
+
+  /// Tells the model when chats were held back, so it can say "there may be
+  /// more in a local conversation" instead of asserting it looked everywhere.
+  static String _withheldNote(int withheld) {
+    if (withheld <= 0) return '';
+    return '\n($withheld shared conversation${withheld == 1 ? ' runs' : 's run'} '
+        'on a local model and cannot be searched from a hosted one, so there '
+        'may be more that you cannot see. Say so rather than implying this is '
+        'everything.)';
   }
 
   /// Splits a query into search terms, dropping the words that would match

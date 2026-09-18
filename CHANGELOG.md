@@ -32,6 +32,52 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.1.0 — 2026-09-18
+
+An iOS build, a log of what actually left the device, and a rule that stops a
+local conversation being excerpted into a hosted request.
+
+- **A local chat can no longer be searched from a hosted one.** `search_chats`
+  shipped in v4.0.0 checking only whether a conversation was shared, not who
+  was asking — so a chat you shared for the local assistant's benefit could be
+  excerpted into an OpenRouter request and leave the machine. Sharing a chat
+  is consent to being searched, not consent to being uploaded. A chat on a
+  hosted model now sees only other hosted chats; a local chat still sees
+  everything, because nothing leaves. It's a rule rather than a setting: the
+  failure is silent and can't be undone once the excerpt is at the provider.
+  When conversations are withheld the model is told, so it says "there may be
+  more I can't see" instead of reporting that it looked everywhere. The
+  privacy page splits the count and states the rule; so does the switch.
+
+- **Outbound requests.** Settings → Security & Privacy → Outbound requests:
+  every HTTP request made this session, recorded at the transport rather than
+  inferred from settings. The destinations list says what your configuration
+  *would* send; this says what actually went. Method, host, path, byte counts,
+  status, duration, and the names of any credential headers — never a body,
+  never a header value, and query parameters that hold a key are redacted
+  (SerpAPI puts its key in the URL). Held in memory, capped, never written to
+  disk: a durable traffic log would be a second plaintext copy of everything
+  you sent.
+
+- **iOS builds.** CI now produces an unsigned IPA on the macOS runner and
+  attaches it to releases. There's no Apple Developer account behind this
+  repo, so you sign it yourself with a free Apple ID — which means a 7-day
+  expiry and a re-sign, not a broken app. The job can't fail a release: iOS is
+  the one target with no device behind it here, and four working platforms
+  shouldn't be held hostage to Xcode.
+
+- **iOS project fixed.** It still carried upstream's bundle identifier
+  (`dev.ibrahimcetin.reins`), upstream's Apple team id, and `Reins` as the
+  display name — so installing Horizon would have replaced Reins on the same
+  device. Now `com.miles.horizon`, no team (Xcode falls back to whoever signs
+  it), and Horizon. `NSMicrophoneUsageDescription` and
+  `NSSpeechRecognitionUsageDescription` were missing entirely, which on iOS is
+  not a permission prompt you don't get — it's the app being killed the
+  instant voice mode opens. The Podfile now declares the iOS 13 floor the
+  Xcode project already had, so `pod install` doesn't fail on speech_to_text.
+
+---
+
 ## v4.0.0 — 2026-09-18
 
 One cloud backend instead of four, a settings section that can answer "where

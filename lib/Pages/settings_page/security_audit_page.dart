@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/chat_history_search.dart';
 import 'package:horizon/Services/home_assistant_service.dart';
+import 'package:horizon/Pages/settings_page/outbound_log_page.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 import 'package:horizon/Services/security_audit.dart';
 import 'package:horizon/Services/web_search_service.dart';
@@ -74,6 +75,9 @@ class _SecurityAuditPageState extends State<SecurityAuditPage> {
       homeAssistantUrl: homeAssistant.baseUrl,
       homeAssistantConfigured: homeAssistant.isConfigured,
       sharedChatCount: chatSearch.bridgedChats.length,
+      sharedCloudChatCount: chatSearch.bridgedChats
+          .where((chat) => !ChatHistorySearch.isLocalProvider(chat.provider))
+          .length,
     ));
 
     if (mounted) setState(() => _entries = entries);
@@ -103,6 +107,28 @@ class _SecurityAuditPageState extends State<SecurityAuditPage> {
               padding: const EdgeInsets.all(16),
               children: [
                 _Summary(entries: entries),
+                const SizedBox(height: 8),
+                // The list below is what the configuration says. This is what
+                // actually went over the wire — the two disagreeing is the
+                // most useful thing this page could ever show anyone.
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    leading: const Icon(Icons.receipt_long_outlined),
+                    title: const Text('Outbound requests'),
+                    subtitle: Text(
+                      'Every request made this session, recorded at the '
+                      'transport rather than inferred from settings',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const OutboundLogPage(),
+                      ),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 for (final trust in EgressTrust.values)
                   ..._section(context, trust, entries),
