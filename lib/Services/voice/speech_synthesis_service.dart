@@ -12,17 +12,51 @@ enum SpeechEngine {
   /// The device's own TTS. Free, offline, instant — and robotic.
   system,
 
+  /// A self-hosted server speaking OpenAI's `/v1/audio/speech` — Speaches
+  /// (Kokoro/Piper), or anything else with that endpoint. Free, no keys, and
+  /// usually the same box already answering transcription requests.
+  selfHosted,
+
   /// ElevenLabs. Needs a key and network, sounds dramatically better.
   elevenLabs;
 
-  static SpeechEngine fromString(String? value) =>
-      value == 'elevenlabs' ? SpeechEngine.elevenLabs : SpeechEngine.system;
+  static SpeechEngine fromString(String? value) {
+    switch (value) {
+      case 'elevenlabs':
+        return SpeechEngine.elevenLabs;
+      case 'selfhosted':
+        return SpeechEngine.selfHosted;
+      default:
+        return SpeechEngine.system;
+    }
+  }
 
-  String get storageValue =>
-      this == SpeechEngine.elevenLabs ? 'elevenlabs' : 'system';
+  String get storageValue {
+    switch (this) {
+      case SpeechEngine.elevenLabs:
+        return 'elevenlabs';
+      case SpeechEngine.selfHosted:
+        return 'selfhosted';
+      case SpeechEngine.system:
+        return 'system';
+    }
+  }
 
-  String get label =>
-      this == SpeechEngine.elevenLabs ? 'ElevenLabs' : 'Device voice';
+  String get label {
+    switch (this) {
+      case SpeechEngine.elevenLabs:
+        return 'ElevenLabs';
+      case SpeechEngine.selfHosted:
+        return 'Self-hosted';
+      case SpeechEngine.system:
+        return 'Device voice';
+    }
+  }
+
+  /// Whether this engine returns audio bytes over HTTP, as opposed to the
+  /// platform speaking the text itself. Decides whether the queue needs to
+  /// prefetch and play clips.
+  bool get isRemote => this != SpeechEngine.system;
 }
 
 /// One named voice offered by an engine.
@@ -55,6 +89,19 @@ class SpeechSynthesisService {
   /// System TTS voice/locale, e.g. `en-GB`. Empty uses the device default.
   String systemVoiceLocale;
 
+  /// Self-hosted `/v1/audio/speech` server root, e.g. `http://172.16.23.20:8000`.
+  String selfHostedBaseUrl;
+
+  /// Model the self-hosted server expects, e.g.
+  /// `speaches-ai/Kokoro-82M-v1.0-ONNX`.
+  String selfHostedModel;
+
+  /// Voice name, e.g. `af_heart` for Kokoro.
+  String selfHostedVoice;
+
+  /// Optional bearer token for the self-hosted server. Usually unset.
+  String selfHostedKey;
+
   /// Playback/speech rate. 1.0 is the engine default.
   double rate;
 
@@ -63,12 +110,44 @@ class SpeechSynthesisService {
     String? elevenLabsKey,
     String? elevenLabsVoiceId,
     String? systemVoiceLocale,
+    String? selfHostedBaseUrl,
+    String? selfHostedModel,
+    String? selfHostedVoice,
+    String? selfHostedKey,
     double? rate,
   })  : engine = engine ?? SpeechEngine.system,
         elevenLabsKey = elevenLabsKey ?? '',
         elevenLabsVoiceId = elevenLabsVoiceId ?? _defaultVoiceId,
         systemVoiceLocale = systemVoiceLocale ?? '',
+        selfHostedBaseUrl = selfHostedBaseUrl ?? '',
+        selfHostedModel = selfHostedModel ?? defaultSelfHostedModel,
+        selfHostedVoice = selfHostedVoice ?? defaultSelfHostedVoice,
+        selfHostedKey = selfHostedKey ?? '',
         rate = rate ?? 1.0;
+
+  /// Speaches' Kokoro build, the usual reason to run one of these at all.
+  static const String defaultSelfHostedModel =
+      'speaches-ai/Kokoro-82M-v1.0-ONNX';
+
+  /// Kokoro's default American female voice.
+  static const String defaultSelfHostedVoice = 'af_heart';
+
+  /// A few Kokoro voices, offered as suggestions. Speaches has no endpoint
+  /// for listing them yet (its docs mark that TODO), so this is a starting
+  /// point rather than a claim about what the server has installed — the
+  /// field stays free text.
+  static const List<String> kokoroVoiceSuggestions = [
+    'af_heart',
+    'af_bella',
+    'af_nicole',
+    'af_sky',
+    'am_michael',
+    'am_puck',
+    'bf_emma',
+    'bf_isabella',
+    'bm_george',
+    'bm_lewis',
+  ];
 
   /// ElevenLabs' "Rachel" — a stock voice on every account.
   static const String _defaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
@@ -105,13 +184,41 @@ class SpeechSynthesisService {
   /// Whether audio is currently coming out of the device.
   bool get isSpeaking => _speaking;
 
-  /// The engine that will actually be used, accounting for a missing key.
-  SpeechEngine get effectiveEngine =>
-      engine == SpeechEngine.elevenLabs && elevenLabsKey.isEmpty
-          ? SpeechEngine.system
-          : engine;
+  /// The engine that will actually be used, accounting for missing config.
+  /// Falling back to the device voice means a missing key is a worse-sounding
+  /// answer rather than a silent one.
+  SpeechEngine get effectiveEngine {
+    switch (engine) {
+      case SpeechEngine.elevenLabs:
+        return isElevenLabsConfigured
+            ? SpeechEngine.elevenLabs
+            : SpeechEngine.system;
+      case SpeechEngine.selfHosted:
+        return isSelfHostedConfigured
+            ? SpeechEngine.selfHosted
+            : SpeechEngine.system;
+      case SpeechEngine.system:
+        return SpeechEngine.system;
+    }
+  }
 
-  bool get isElevenLabsConfigured => elevenLabsKey.isNotEmpty;
+  bool get isElevenLabsConfigured => elevenLabsKey.trim().isNotEmpty;
+
+  bool get isSelfHostedConfigured => selfHostedBaseUrl.trim().isNotEmpty;
+
+  /// Resolved `/v1/audio/speech` endpoint. Tolerates a missing scheme, a
+  /// trailing slash, and a base that already ends in `/v1` — the same
+  /// leniency the Whisper transcriber needs, and for the same reason: these
+  /// servers get written down both ways.
+  Uri selfHostedEndpoint() {
+    var base = selfHostedBaseUrl.trim();
+    if (!base.startsWith('http://') && !base.startsWith('https://')) {
+      base = 'http://$base';
+    }
+    base = base.replaceAll(RegExp(r'/+$'), '');
+    if (base.endsWith('/v1')) return Uri.parse('$base/audio/speech');
+    return Uri.parse('$base/v1/audio/speech');
+  }
 
   /// Queues [text] to be spoken. Returns immediately.
   void enqueue(String text) {
@@ -161,17 +268,17 @@ class SpeechSynthesisService {
       while (_queue.isNotEmpty && !_stopped && generation == _generation) {
         final chunk = _queue.removeAt(0);
 
-        if (effectiveEngine == SpeechEngine.elevenLabs) {
+        if (effectiveEngine.isRemote) {
           // Take whatever was prefetched for this chunk, then immediately
           // start fetching the next one so the network round-trip overlaps
           // with playback instead of adding to it.
           final pending = _prefetch;
           _prefetch = null;
-          final bytes = await (pending ?? _synthesizeElevenLabs(chunk));
+          final bytes = await (pending ?? _synthesizeRemote(chunk));
           if (_stopped || generation != _generation) return;
 
           if (_queue.isNotEmpty) {
-            _prefetch = _synthesizeElevenLabs(_queue.first);
+            _prefetch = _synthesizeRemote(_queue.first);
           }
 
           if (bytes != null) {
@@ -236,6 +343,55 @@ class SpeechSynthesisService {
       await _player.onPlayerComplete.first;
     } catch (_) {
       // Fall through; the caller already handled a null synthesis.
+    }
+  }
+
+  /// Dispatches to whichever remote engine is active.
+  Future<Uint8List?> _synthesizeRemote(String text) {
+    switch (effectiveEngine) {
+      case SpeechEngine.elevenLabs:
+        return _synthesizeElevenLabs(text);
+      case SpeechEngine.selfHosted:
+        return _synthesizeSelfHosted(text);
+      case SpeechEngine.system:
+        return Future.value(null);
+    }
+  }
+
+  /// OpenAI's `/v1/audio/speech` shape, which Speaches implements verbatim.
+  Future<Uint8List?> _synthesizeSelfHosted(String text) async {
+    if (!isSelfHostedConfigured) return null;
+    try {
+      final response = await HorizonHttp.client
+          .post(
+            selfHostedEndpoint(),
+            headers: {
+              'content-type': 'application/json',
+              if (selfHostedKey.trim().isNotEmpty)
+                'Authorization': 'Bearer ${selfHostedKey.trim()}',
+            },
+            body: json.encode({
+              'model': selfHostedModel.trim().isEmpty
+                  ? defaultSelfHostedModel
+                  : selfHostedModel.trim(),
+              'voice': selfHostedVoice.trim().isEmpty
+                  ? defaultSelfHostedVoice
+                  : selfHostedVoice.trim(),
+              'input': text,
+              // Speaches supports mp3 and wav but not opus or aac; mp3 is the
+              // smaller of the two over the wire.
+              'response_format': 'mp3',
+              'speed': rate.clamp(0.5, 2.0),
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode != 200) return null;
+      if (response.bodyBytes.isEmpty) return null;
+      return response.bodyBytes;
+    } catch (_) {
+      // Falls through to the device voice for this sentence.
+      return null;
     }
   }
 

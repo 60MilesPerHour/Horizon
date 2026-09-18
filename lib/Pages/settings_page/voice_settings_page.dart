@@ -95,6 +95,10 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
           _section('Text to speech'),
           _engineSelector(),
+          if (_synthesis.engine == SpeechEngine.selfHosted) ...[
+            const SizedBox(height: 12),
+            _selfHostedTtsFields(),
+          ],
           if (_synthesis.engine == SpeechEngine.elevenLabs) ...[
             const SizedBox(height: 12),
             _elevenLabsKeyField(),
@@ -386,6 +390,11 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
               label: Text('Device'),
             ),
             ButtonSegment(
+              value: SpeechEngine.selfHosted,
+              icon: Icon(Icons.dns_outlined),
+              label: Text('Self-hosted'),
+            ),
+            ButtonSegment(
               value: SpeechEngine.elevenLabs,
               icon: Icon(Icons.graphic_eq),
               label: Text('ElevenLabs'),
@@ -403,14 +412,103 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         ),
         const SizedBox(height: 4),
         Text(
-          _synthesis.engine == SpeechEngine.elevenLabs
-              ? 'One network round-trip per sentence, with the next clip '
-                  'fetched while the current one plays. A failed request falls '
-                  'back to the device voice for that sentence rather than '
-                  'dropping it.'
-              : 'Free, offline, and instant. Sounds like a satnav.',
+          switch (_synthesis.engine) {
+            SpeechEngine.elevenLabs =>
+              'One network round-trip per sentence, with the next clip fetched '
+                  'while the current one plays. A failed request falls back to '
+                  'the device voice for that sentence rather than dropping it.',
+            SpeechEngine.selfHosted =>
+              'Your own server on the OpenAI /v1/audio/speech endpoint — '
+                  'Speaches with Kokoro is the usual one, and the same '
+                  'container also serves transcription above. No keys, no '
+                  'per-hour cost.',
+            SpeechEngine.system =>
+              'Free, offline, and instant. Sounds like a satnav.',
+          },
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  Widget _selfHostedTtsFields() {
+    final theme = Theme.of(context);
+    // Speaches serves transcription and speech from one container, so the
+    // address is almost always the one already entered above — offer it
+    // rather than making it be typed twice.
+    final whisperUrl = (_settings.get('whisper_base_url') as String? ?? '').trim();
+    final currentUrl = _synthesis.selfHostedBaseUrl.trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _PersistedField(
+          label: 'Server address',
+          hint: 'http://172.16.23.20:8000',
+          initialValue: currentUrl.isEmpty ? whisperUrl : currentUrl,
+          onChanged: (value) {
+            _synthesis.selfHostedBaseUrl = value;
+            _settings.put('tts_base_url', value);
+          },
+        ),
+        if (currentUrl.isEmpty && whisperUrl.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4.0),
+            child: Text(
+              'Prefilled from your Whisper server — Speaches serves both from '
+              'the same address.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        const SizedBox(height: 8),
+        _PersistedField(
+          label: 'Model',
+          hint: SpeechSynthesisService.defaultSelfHostedModel,
+          initialValue: _settings.get('tts_model') as String? ??
+              SpeechSynthesisService.defaultSelfHostedModel,
+          onChanged: (value) {
+            _synthesis.selfHostedModel = value;
+            _settings.put('tts_model', value);
+          },
+        ),
+        const SizedBox(height: 8),
+        _PersistedField(
+          label: 'Voice',
+          hint: SpeechSynthesisService.defaultSelfHostedVoice,
+          initialValue: _settings.get('tts_voice') as String? ??
+              SpeechSynthesisService.defaultSelfHostedVoice,
+          onChanged: (value) {
+            _synthesis.selfHostedVoice = value;
+            _settings.put('tts_voice', value);
+          },
+        ),
+        const SizedBox(height: 8),
+        // Free text with suggestions, not a dropdown: Speaches has no
+        // voice-listing endpoint yet, so any fixed list would be a guess
+        // about what's actually installed on the server.
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: SpeechSynthesisService.kokoroVoiceSuggestions
+              .map((voice) => ActionChip(
+                    label: Text(voice),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () async {
+                      setState(() => _synthesis.selfHostedVoice = voice);
+                      await _settings.put('tts_voice', voice);
+                    },
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        _PersistedField(
+          label: 'API key (optional)',
+          hint: 'Only if your server requires one',
+          obscure: true,
+          secureStorageKey: 'tts_api_key',
+          onChanged: (value) => _synthesis.selfHostedKey = value,
         ),
       ],
     );

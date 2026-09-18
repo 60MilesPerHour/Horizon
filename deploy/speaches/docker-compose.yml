@@ -1,0 +1,42 @@
+# Speaches — self-hosted speech-to-text and text-to-speech for Horizon.
+#
+# One OpenAI-compatible server for both halves of voice mode:
+#   POST /v1/audio/transcriptions   (faster-whisper)  -> Settings > Voice > Whisper
+#   POST /v1/audio/speech           (Kokoro / Piper)  -> Settings > Voice > Self-hosted
+#
+# Intended for the AI rig at 172.16.23.20, alongside Ollama on 11434. Point
+# both Horizon fields at http://172.16.23.20:8000 and nothing else is needed.
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    container_name: speaches
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Models are pulled from Hugging Face on first use; without this they
+      # re-download on every container recreate.
+      - hf-hub-cache:/home/ubuntu/.cache/huggingface/hub
+    environment:
+      # Unload an idle Whisper model after 5 minutes.
+      #
+      # This is the setting that matters on a box already running Ollama: the
+      # two compete for the same VRAM, and a voice turn is a few seconds of
+      # work every few minutes. -1 would pin the model in memory permanently
+      # for no benefit. Cold reload costs a couple of seconds on the first
+      # turn after an idle spell.
+      - WHISPER__TTL=300
+      # int8 roughly halves the weights against float16 with no accuracy cost
+      # worth caring about at conversational audio quality.
+      - WHISPER__COMPUTE_TYPE=int8_float16
+      - ENABLE_UI=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf-hub-cache:

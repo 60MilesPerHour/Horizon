@@ -134,6 +134,64 @@ void main() {
     });
   });
 
+  group('self-hosted TTS', () {
+    test('endpoint is appended to a bare host and port', () {
+      final s = SpeechSynthesisService(
+        selfHostedBaseUrl: 'http://172.16.23.20:8000',
+      );
+      expect(s.selfHostedEndpoint().toString(),
+          'http://172.16.23.20:8000/v1/audio/speech');
+    });
+
+    test('a trailing slash does not produce a doubled path', () {
+      final s = SpeechSynthesisService(
+        selfHostedBaseUrl: 'http://speaches.test/',
+      );
+      expect(s.selfHostedEndpoint().toString(),
+          'http://speaches.test/v1/audio/speech');
+    });
+
+    test('a base already ending in /v1 is not doubled', () {
+      final s = SpeechSynthesisService(
+        selfHostedBaseUrl: 'http://speaches.test/v1',
+      );
+      expect(s.selfHostedEndpoint().toString(),
+          'http://speaches.test/v1/audio/speech');
+    });
+
+    test('a missing scheme is assumed to be http', () {
+      final s = SpeechSynthesisService(selfHostedBaseUrl: '172.16.23.20:8000');
+      expect(s.selfHostedEndpoint().scheme, 'http');
+    });
+
+    test('defaults target Speaches with Kokoro', () {
+      final s = SpeechSynthesisService();
+      expect(s.selfHostedModel, contains('Kokoro'));
+      expect(SpeechSynthesisService.kokoroVoiceSuggestions,
+          contains(s.selfHostedVoice));
+    });
+
+    test('without an address it falls back to the device voice', () {
+      final s = SpeechSynthesisService(engine: SpeechEngine.selfHosted);
+      expect(s.isSelfHostedConfigured, isFalse);
+      expect(s.effectiveEngine, SpeechEngine.system);
+    });
+
+    test('with an address it is used', () {
+      final s = SpeechSynthesisService(
+        engine: SpeechEngine.selfHosted,
+        selfHostedBaseUrl: 'http://speaches.test',
+      );
+      expect(s.effectiveEngine, SpeechEngine.selfHosted);
+    });
+
+    test('only the device engine is local', () {
+      expect(SpeechEngine.system.isRemote, isFalse);
+      expect(SpeechEngine.selfHosted.isRemote, isTrue);
+      expect(SpeechEngine.elevenLabs.isRemote, isTrue);
+    });
+  });
+
   group('engine fallback', () {
     test('ElevenLabs without a key reports the device voice as effective', () {
       final service = SpeechSynthesisService(engine: SpeechEngine.elevenLabs);

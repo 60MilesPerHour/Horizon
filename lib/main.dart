@@ -91,6 +91,7 @@ void main() async {
   String? openrouterKey;
   String? elevenLabsKey;
   String? whisperKey;
+  String? ttsKey;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
@@ -104,6 +105,7 @@ void main() async {
     openrouterKey = await storage.read(key: 'openrouter_api_key');
     elevenLabsKey = await storage.read(key: 'elevenlabs_api_key');
     whisperKey = await storage.read(key: 'whisper_api_key');
+    ttsKey = await storage.read(key: 'tts_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -176,6 +178,10 @@ void main() async {
     elevenLabsKey: elevenLabsKey,
     elevenLabsVoiceId: settingsBox.get('elevenlabs_voice_id') as String?,
     systemVoiceLocale: settingsBox.get('voice_tts_locale') as String?,
+    selfHostedBaseUrl: settingsBox.get('tts_base_url') as String?,
+    selfHostedModel: settingsBox.get('tts_model') as String?,
+    selfHostedVoice: settingsBox.get('tts_voice') as String?,
+    selfHostedKey: ttsKey,
     rate: (settingsBox.get('voice_rate') as num?)?.toDouble(),
   );
 
