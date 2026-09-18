@@ -19,14 +19,29 @@ class ChatDrawer extends StatelessWidget {
             Container(
               alignment: Alignment.centerLeft,
               padding: const EdgeInsets.fromLTRB(28, 16, 28, 10),
-              child: IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () {
-                  if (ResponsiveBreakpoints.of(context).isMobile) {
-                    Navigator.pop(context);
-                  }
-                  Navigator.pushNamed(context, '/settings');
-                },
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: 'Settings',
+                    onPressed: () {
+                      if (ResponsiveBreakpoints.of(context).isMobile) {
+                        Navigator.pop(context);
+                      }
+                      Navigator.pushNamed(context, '/settings');
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.graphic_eq),
+                    tooltip: 'Voice mode',
+                    onPressed: () {
+                      if (ResponsiveBreakpoints.of(context).isMobile) {
+                        Navigator.pop(context);
+                      }
+                      Navigator.pushNamed(context, '/assistant');
+                    },
+                  ),
+                ],
               ),
             ),
           ],

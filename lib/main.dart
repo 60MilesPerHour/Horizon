@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
+import 'package:horizon/Pages/assistant_page/assistant_page.dart';
 import 'package:horizon/Pages/chat_page/chat_page_view_model.dart';
 import 'package:horizon/Pages/main_page.dart';
 import 'package:horizon/Pages/ollama_models_page/ollama_models_page.dart';
 import 'package:horizon/Pages/settings_page/settings_page.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/services.dart';
+import 'package:horizon/Services/voice/speech_recognition_service.dart';
+import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -79,6 +83,7 @@ void main() async {
   String? cfAccessClientSecret;
   String? serpApiKey;
   String? openrouterKey;
+  String? elevenLabsKey;
   try {
     const storage = FlutterSecureStorage();
     claudeKey = await storage.read(key: 'anthropic_api_key');
@@ -90,6 +95,7 @@ void main() async {
     cfAccessClientSecret = await storage.read(key: 'cf_access_client_secret');
     serpApiKey = await storage.read(key: 'serpapi_api_key');
     openrouterKey = await storage.read(key: 'openrouter_api_key');
+    elevenLabsKey = await storage.read(key: 'elevenlabs_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -140,6 +146,17 @@ void main() async {
   );
   final toolService = ToolService(webSearch: webSearchService);
 
+  // Voice mode. The synthesiser holds config rather than reading Hive on each
+  // utterance, mirroring the chat services; Settings mutates it live.
+  final speechRecognition = SpeechRecognitionService();
+  final speechSynthesis = SpeechSynthesisService(
+    engine: SpeechEngine.fromString(settingsBox.get('voice_engine') as String?),
+    elevenLabsKey: elevenLabsKey,
+    elevenLabsVoiceId: settingsBox.get('elevenlabs_voice_id') as String?,
+    systemVoiceLocale: settingsBox.get('voice_tts_locale') as String?,
+    rate: (settingsBox.get('voice_rate') as num?)?.toDouble(),
+  );
+
   runApp(
     MultiProvider(
       providers: [
@@ -151,6 +168,8 @@ void main() async {
         Provider(create: (_) => registry),
         Provider(create: (_) => webSearchService),
         Provider(create: (_) => toolService),
+        Provider(create: (_) => speechRecognition),
+        Provider(create: (_) => speechSynthesis),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
@@ -179,8 +198,40 @@ void main() async {
   );
 }
 
-class HorizonApp extends StatelessWidget {
+class HorizonApp extends StatefulWidget {
   const HorizonApp({super.key});
+
+  @override
+  State<HorizonApp> createState() => _HorizonAppState();
+}
+
+class _HorizonAppState extends State<HorizonApp> {
+  /// Needed to push the assistant route from the platform channel, which
+  /// fires outside any widget's BuildContext.
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  static const MethodChannel _assistantChannel =
+      MethodChannel('com.miles.horizon/assistant');
+
+  @override
+  void initState() {
+    super.initState();
+    // getInitialRoute on the Android side covers a cold launch; this covers an
+    // assist gesture against an already-running process, which reuses the
+    // activity and so never re-reads the initial route.
+    _assistantChannel.setMethodCallHandler((call) async {
+      if (call.method != 'openAssistant') return null;
+      final navigator = _navigatorKey.currentState;
+      if (navigator == null) return null;
+      // Replace rather than stack, so repeated gestures don't build a pile of
+      // assistant pages behind each other.
+      navigator.pushNamedAndRemoveUntil(
+        '/assistant?autostart=1',
+        (route) => route.isFirst,
+      );
+      return null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -193,6 +244,7 @@ class HorizonApp extends StatelessWidget {
         final seedColor = box.get('color', defaultValue: Colors.grey) as Color;
 
         return MaterialApp(
+          navigatorKey: _navigatorKey,
           title: AppConstants.appName,
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
@@ -242,6 +294,16 @@ class HorizonApp extends StatelessWidget {
             if (settings.name == '/ollama-models') {
               return MaterialPageRoute(
                 builder: (context) => const OllamaModelsPage(),
+              );
+            }
+
+            // Launched by the assist gesture (autostart=1, so the mic opens
+            // without a tap) or from the app's own voice button.
+            final routeUri = Uri.tryParse(settings.name ?? '');
+            if (routeUri?.path == '/assistant') {
+              final autoStart = routeUri?.queryParameters['autostart'] == '1';
+              return MaterialPageRoute(
+                builder: (context) => AssistantPage(autoStart: autoStart),
               );
             }
 

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 3.8.0+44
+version: 3.9.0+45
 
 environment:
   sdk: ^3.5.4
@@ -108,6 +108,12 @@ dependencies:
   # Syntax highlighting for fenced code blocks in replies
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
+
+  # Voice mode: on-device speech recognition, system text-to-speech, and
+  # playback for synthesised audio fetched from ElevenLabs.
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.0
+  audioplayers: ^6.1.0
 
   notification_centre: ^0.0.3
 

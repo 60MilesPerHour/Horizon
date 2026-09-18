@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Declares Horizon's voice interaction capability. Without this file (and the
+  meta-data pointing at it) the VoiceInteractionService is ignored and Horizon
+  never shows up in the digital-assistant picker.
+
+  android:recognitionService is required by AOSP's parser even though Horizon
+  doesn't implement recognition itself — see HorizonRecognitionService for why
+  it forwards to the platform recogniser rather than erroring.
+-->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.miles.horizon.HorizonVoiceSessionService"
+    android:recognitionService="com.miles.horizon.HorizonRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLocalInteraction="false"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

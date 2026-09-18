@@ -171,6 +171,61 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Hive key holding the id of the chat voice mode talks to.
+  static const String assistantChatIdKey = 'assistant_chat_id';
+
+  /// Selects an existing chat by id, loading its messages. Returns false when
+  /// the chat is gone — the caller decides whether to make a new one.
+  Future<bool> selectChatById(String chatId) async {
+    final index = _chats.indexWhere((c) => c.id == chatId);
+    if (index == -1) return false;
+    _currentChatIndex = index;
+    await _loadCurrentChat();
+    return true;
+  }
+
+  /// Makes the assistant chat current, creating it on first use.
+  ///
+  /// Voice mode uses one long-lived chat rather than a fresh one per
+  /// invocation, so the assistant remembers the last thing it was asked — the
+  /// difference between a conversation and a search box. It's a normal chat:
+  /// it shows up in the sidebar and can be read, exported, or deleted like
+  /// any other.
+  Future<OllamaChat?> ensureAssistantChat({
+    required OllamaModel? model,
+    String? systemPrompt,
+  }) async {
+    final settings = Hive.box('settings');
+    final storedId = settings.get(assistantChatIdKey) as String?;
+
+    if (storedId != null && await selectChatById(storedId)) {
+      return currentChat;
+    }
+
+    // No model to create one with: the caller has to resolve that first, and
+    // creating a chat pinned to a nonexistent model would just fail on send.
+    if (model == null) return null;
+
+    final chat = await _createNewChatInternal(model, firstPrompt: null);
+    await _databaseService.updateChat(
+      chat,
+      newTitle: 'Assistant',
+      newSystemPrompt: systemPrompt,
+    );
+    _chats[0] = (await _databaseService.getChat(chat.id))!;
+    await settings.put(assistantChatIdKey, chat.id);
+    notifyListeners();
+    return _chats[0];
+  }
+
+  /// The model the assistant chat is pinned to, if it exists.
+  String? get assistantChatModel {
+    final storedId = Hive.box('settings').get(assistantChatIdKey) as String?;
+    if (storedId == null) return null;
+    final index = _chats.indexWhere((c) => c.id == storedId);
+    return index == -1 ? null : _chats[index].model;
+  }
+
   /// Atomic "create a new chat AND send the first prompt" path used when the
   /// user fires off a prompt with no current chat selected. Folds the chat
   /// creation, message seeding, and stream init into a single notify cycle so
@@ -296,6 +351,13 @@ class ChatProvider extends ChangeNotifier {
 
     _chats.remove(chat);
     _activeChatStreams.remove(chat.id);
+
+    // Forget the pointer too, or voice mode keeps trying to open a chat that
+    // no longer exists and silently refuses to start.
+    final settings = Hive.box('settings');
+    if (settings.get(assistantChatIdKey) == chat.id) {
+      await settings.delete(assistantChatIdKey);
+    }
 
     await _databaseService.deleteChat(chat.id);
   }

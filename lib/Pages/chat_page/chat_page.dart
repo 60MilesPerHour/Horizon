@@ -185,7 +185,13 @@ class _ChatPageState extends State<ChatPage> {
         onPressed: _sendMessage,
       );
     } else {
-      return null;
+      // Nothing to send: offer voice instead of an empty corner.
+      return IconButton(
+        icon: const Icon(Icons.graphic_eq),
+        tooltip: 'Voice mode',
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+        onPressed: () => Navigator.pushNamed(context, '/assistant'),
+      );
     }
   }
 
