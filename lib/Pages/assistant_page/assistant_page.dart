@@ -39,23 +39,22 @@ class _AssistantPageState extends State<AssistantPage> {
     final chatProvider = context.read<ChatProvider>();
     final settings = Hive.box('settings');
 
-    // Pin the assistant to whatever model Settings names, falling back to the
-    // model the chat already uses, then to anything available. Failing to
-    // resolve one is the only hard blocker here.
+    // An existing assistant chat is already pinned to a model, so listing
+    // models would just add a network round-trip to the assist gesture — the
+    // one path where every millisecond is visible. Only resolve a model when
+    // there's no chat yet.
     OllamaModel? model;
-    final preferredName = settings.get('assistant_model') as String?;
-    try {
-      final models = await chatProvider.fetchAvailableModels();
-      if (models.isNotEmpty) {
-        model = models.firstWhere(
-          (m) => m.name == (preferredName ?? chatProvider.assistantChatModel),
-          orElse: () => models.first,
-        );
-      }
-    } catch (e) {
-      // An existing assistant chat already knows its model, so a failed model
-      // fetch is only fatal on first run.
-      if (chatProvider.assistantChatModel == null) {
+    if (chatProvider.assistantChatModel == null) {
+      final preferredName = settings.get('assistant_model') as String?;
+      try {
+        final models = await chatProvider.fetchAvailableModels();
+        if (models.isNotEmpty) {
+          model = models.firstWhere(
+            (m) => m.name == preferredName,
+            orElse: () => models.first,
+          );
+        }
+      } catch (e) {
         _fail('Could not reach any model provider.\n\n$e');
         return;
       }

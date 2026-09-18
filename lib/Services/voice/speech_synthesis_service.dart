@@ -96,6 +96,12 @@ class SpeechSynthesisService {
   bool _speaking = false;
   bool _stopped = false;
 
+  /// Bumped by [stop]. A drain loop captures it and abandons itself the moment
+  /// it changes, which is what stops barge-in producing two voices: without
+  /// it, stop() clearing `_speaking` lets the next enqueue start a second
+  /// drain while the first is still parked on an await inside playback.
+  int _generation = 0;
+
   /// Whether audio is currently coming out of the device.
   bool get isSpeaking => _speaking;
 
@@ -128,6 +134,7 @@ class SpeechSynthesisService {
   /// wait for the sentence to finish.
   Future<void> stop() async {
     _stopped = true;
+    _generation++;
     _queue.clear();
     _prefetch = null;
     _speaking = false;
@@ -148,9 +155,10 @@ class SpeechSynthesisService {
   Future<void> _drain() async {
     if (_speaking) return;
     _speaking = true;
+    final generation = _generation;
 
     try {
-      while (_queue.isNotEmpty && !_stopped) {
+      while (_queue.isNotEmpty && !_stopped && generation == _generation) {
         final chunk = _queue.removeAt(0);
 
         if (effectiveEngine == SpeechEngine.elevenLabs) {
@@ -160,7 +168,7 @@ class SpeechSynthesisService {
           final pending = _prefetch;
           _prefetch = null;
           final bytes = await (pending ?? _synthesizeElevenLabs(chunk));
-          if (_stopped) return;
+          if (_stopped || generation != _generation) return;
 
           if (_queue.isNotEmpty) {
             _prefetch = _synthesizeElevenLabs(_queue.first);
@@ -177,13 +185,16 @@ class SpeechSynthesisService {
         await _speakSystem(chunk);
       }
     } finally {
-      _speaking = false;
+      // Only the current owner may clear the flag; a superseded loop
+      // unwinding must not mark a live one as finished.
+      if (generation == _generation) _speaking = false;
     }
   }
 
   Future<void> _speakSystem(String text) async {
+    final generation = _generation;
     await _configureSystemTts();
-    if (_stopped) return;
+    if (_stopped || generation != _generation) return;
     try {
       // awaitSpeakCompletion (set below) makes this resolve when the utterance
       // finishes, which is what keeps the queue in order.
