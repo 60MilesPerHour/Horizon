@@ -12,6 +12,12 @@ services:
     volumes:
       - ./out:/out
       - ./data:/data
+      # The scripts are also COPY'd into the image, but mounting them means an
+      # edit takes effect on the next run instead of needing a rebuild — and
+      # editing the host file after a build otherwise silently does nothing,
+      # which is a genuinely confusing way to lose time.
+      - ./train.py:/work/train.py:ro
+      - ./preview.py:/work/preview.py:ro
     deploy:
       resources:
         reservations:

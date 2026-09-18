@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 import scipy.io.wavfile
@@ -73,6 +74,45 @@ def validate_phrase(phrase: str) -> str:
     return cleaned
 
 
+def decode_to_16k_mono(raw: bytes) -> "np.ndarray | None":
+    """Decode arbitrary compressed audio to 16 kHz mono via ffmpeg.
+
+    ffmpeg rather than `datasets`' own decoding, deliberately. datasets 5.x
+    delegates audio decode to torchcodec, whose wheels are built per-CUDA and
+    resolve to one wanting libnvrtc.so.13 against this CUDA 12.1 image.
+    Pinning the notebook's old datasets instead drags in pyarrow<15 and
+    numpy<2 — a 2023 stack fighting this image's numpy 2.1.
+
+    ffmpeg is already here for Piper, handles flac/mp3/wav/ogg alike, and has
+    no opinion about torch versions. It sidesteps the whole problem class.
+    """
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error",
+             "-i", "pipe:0",
+             "-f", "s16le", "-acodec", "pcm_s16le",
+             "-ac", "1", "-ar", "16000", "pipe:1"],
+            input=raw, capture_output=True, check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    if not proc.stdout:
+        return None
+    return np.frombuffer(proc.stdout, dtype=np.int16)
+
+
+def parquet_rows(url: str) -> Iterator[dict]:
+    """Stream a remote parquet a row group at a time, without downloading it whole."""
+    import fsspec
+    import pyarrow.parquet as pq
+
+    with fsspec.open(url).open() as handle:
+        parquet = pq.ParquetFile(handle)
+        for group in range(parquet.num_row_groups):
+            for row in parquet.read_row_group(group).to_pylist():
+                yield row
+
+
 def prepare_rirs() -> Path:
     """Room impulse responses, for training with realistic echo."""
     out = DATA / "mit_rirs"
@@ -83,68 +123,103 @@ def prepare_rirs() -> Path:
 
     repo = DATA / "MIT_environmental_impulse_responses"
     if not repo.exists():
-        run(["git", "clone",
+        run(["git", "clone", "--depth", "1",
              "https://huggingface.co/datasets/davidscripka/MIT_environmental_impulse_responses",
              str(repo)])
 
-    import datasets
-    ds = datasets.Dataset.from_dict(
-        {"audio": [str(p) for p in (repo / "16khz").glob("*.wav")]}
-    ).cast_column("audio", datasets.Audio())
-    for row in tqdm(ds, desc="RIRs -> 16-bit wav"):
-        name = row["audio"]["path"].split("/")[-1]
-        scipy.io.wavfile.write(
-            out / name, 16000, (row["audio"]["array"] * 32767).astype(np.int16)
-        )
+    sources = sorted((repo / "16khz").glob("*.wav"))
+    for source in tqdm(sources, desc="RIRs -> 16 kHz wav"):
+        samples = decode_to_16k_mono(source.read_bytes())
+        if samples is None:
+            continue
+        scipy.io.wavfile.write(out / source.name, 16000, samples)
     return out
 
 
-def prepare_audioset() -> Path:
-    """A slice of AudioSet as background noise."""
+def prepare_audioset(clips: int = 1200) -> Path:
+    """A slice of AudioSet as background noise.
+
+    The notebook fetched `data/bal_train09.tar` and globbed flacs out of it;
+    that 404s, because the dataset was repacked into 38 parquet shards under
+    `data/bal_train/`. Audio arrives as `struct<bytes, path>`, decoded here
+    with ffmpeg — see decode_to_16k_mono for why not `datasets`.
+    """
     out = DATA / "audioset_16k"
-    if out.exists() and any(out.glob("*.wav")):
+    if out.exists() and len(list(out.glob("*.wav"))) >= clips // 2:
         print(f"AudioSet already present at {out}")
         return out
     out.mkdir(parents=True, exist_ok=True)
 
-    tar_dir = DATA / "audioset"
-    tar_dir.mkdir(parents=True, exist_ok=True)
-    tar = tar_dir / "bal_train09.tar"
-    if not tar.exists():
-        run(["wget", "-O", str(tar),
-             "https://huggingface.co/datasets/agkphysics/AudioSet/resolve/main/data/bal_train09.tar"])
-    run(["tar", "-xf", str(tar), "-C", str(tar_dir)])
+    base = ("https://huggingface.co/datasets/agkphysics/AudioSet"
+            "/resolve/main/data/bal_train")
 
-    import datasets
-    ds = datasets.Dataset.from_dict(
-        {"audio": [str(p) for p in (tar_dir / "audio").glob("**/*.flac")]}
-    ).cast_column("audio", datasets.Audio(sampling_rate=16000))
-    for row in tqdm(ds, desc="AudioSet -> 16-bit wav"):
-        name = row["audio"]["path"].split("/")[-1].replace(".flac", ".wav")
-        scipy.io.wavfile.write(
-            out / name, 16000, (row["audio"]["array"] * 32767).astype(np.int16)
+    written = 0
+    shard = 0
+    with tqdm(total=clips, desc="AudioSet -> 16 kHz wav") as progress:
+        while written < clips and shard < 38:
+            for row in parquet_rows(f"{base}/{shard:02d}.parquet"):
+                audio = row.get("audio") or {}
+                samples = decode_to_16k_mono(audio.get("bytes") or b"")
+                if samples is None or samples.size < 16000:
+                    continue
+                name = str(audio.get("path") or f"clip_{written}").split("/")[-1]
+                scipy.io.wavfile.write(
+                    out / (name.rsplit(".", 1)[0] + ".wav"), 16000, samples
+                )
+                written += 1
+                progress.update(1)
+                if written >= clips:
+                    break
+            shard += 1
+
+    if written == 0:
+        raise SystemExit(
+            "No AudioSet clips could be decoded. Check the layout at "
+            "https://huggingface.co/datasets/agkphysics/AudioSet/tree/main/data"
         )
+    print(f"Wrote {written} background clips to {out}")
     return out
 
 
-def prepare_music(hours: int = 1) -> Path:
-    """Music as a second kind of background — harder negatives than noise."""
+def prepare_music(hours: int = 1) -> Path | None:
+    """Music as a second kind of background — harder negatives than noise.
+
+    Optional: returns None if it can't be fetched. Noise augmentation plus the
+    2,000 hours of pre-computed negative features carry most of the weight, so
+    a music outage shouldn't block a training run.
+    """
     out = DATA / "fma"
     if out.exists() and any(out.glob("*.wav")):
         print(f"Music already present at {out}")
         return out
     out.mkdir(parents=True, exist_ok=True)
 
-    import datasets
-    ds = datasets.load_dataset("rudraml/fma", name="small", split="train", streaming=True)
-    ds = iter(ds.cast_column("audio", datasets.Audio(sampling_rate=16000)))
     clips = hours * 3600 // 30  # the FMA small set is all 30-second clips
-    for _ in tqdm(range(clips), desc="Music -> 16-bit wav"):
-        row = next(ds)
-        name = row["audio"]["path"].split("/")[-1].replace(".mp3", ".wav")
-        scipy.io.wavfile.write(
-            out / name, 16000, (row["audio"]["array"] * 32767).astype(np.int16)
-        )
+    url = ("https://huggingface.co/datasets/rudraml/fma/resolve/refs%2Fconvert"
+           "%2Fparquet/small/train/0000.parquet")
+
+    written = 0
+    try:
+        with tqdm(total=clips, desc="Music -> 16 kHz wav") as progress:
+            for row in parquet_rows(url):
+                audio = row.get("audio") or {}
+                samples = decode_to_16k_mono(audio.get("bytes") or b"")
+                if samples is None or samples.size < 16000:
+                    continue
+                name = str(audio.get("path") or f"music_{written}").split("/")[-1]
+                scipy.io.wavfile.write(
+                    out / (name.rsplit(".", 1)[0] + ".wav"), 16000, samples
+                )
+                written += 1
+                progress.update(1)
+                if written >= clips:
+                    break
+    except Exception as error:
+        print(f"Music download skipped ({error}); continuing with noise only.")
+
+    if written == 0:
+        return None
+    print(f"Wrote {written} music clips to {out}")
     return out
 
 
@@ -203,7 +278,7 @@ def main() -> int:
         "target_recall": 0.25,
         "output_dir": str(OUT),
         "max_negative_weight": args.false_activation_penalty,
-        "background_paths": [str(audioset), str(music)],
+        "background_paths": [str(p) for p in (audioset, music) if p is not None],
         "false_positive_validation_data_path": str(val_features),
         "feature_data_files": {"ACAV100M_sample": str(train_features)},
         "rir_paths": [str(DATA / "mit_rirs")],

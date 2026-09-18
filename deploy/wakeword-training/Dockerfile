@@ -37,15 +37,29 @@ RUN git clone https://github.com/dscripka/openwakeword
 # Split from the clone so a dependency change doesn't re-clone, and pinned to
 # the notebook's versions — these are what the training code is written
 # against, and unpinning them is how you get errors deep inside speechbrain.
+#
+# scipy<1.15 IS required, unlike the datasets pin below: openWakeWord's
+# data.py imports `acoustics`, and acoustics 0.2.6 imports
+# scipy.special.sph_harm, which scipy 1.15 removed. acoustics is abandoned at
+# 0.2.6, so there's no newer release to move to. scipy 1.14 still supports
+# numpy 2.x, so this doesn't drag the rest of the stack backwards.
+#
+# `datasets` is deliberately NOT pinned to the notebook's 2.14.6. That pin
+# drags in pyarrow<15 (2.14.6 uses pa.PyExtensionType, removed in 15), which
+# in turn needs numpy<2 for the ABI — a 2023 stack fighting this image's
+# numpy 2.1. And it buys nothing: openWakeWord's own training code imports
+# neither datasets nor pyarrow. Only this repo's loader uses datasets, for
+# `load_dataset(..., streaming=True)` and `cast_column`, both long-stable.
 RUN pip install --no-cache-dir \
         piper-tts piper-phonemize-cross webrtcvad \
         mutagen==1.47.0 torchinfo==1.8.0 torchmetrics==1.2.0 \
         speechbrain==0.5.14 audiomentations==0.33.0 \
         torch-audiomentations==0.11.0 acoustics==0.2.6 \
-        pronouncing==0.2.0 datasets==2.14.6 deep-phonemizer==0.0.19 \
+        pronouncing==0.2.0 deep-phonemizer==0.0.19 \
+        datasets \
         onnxruntime==1.22.1 ai_edge_litert==1.4.0 onnxsim \
         onnx==1.19.1 onnx2tf onnx_graphsurgeon sng4onnx \
-        scipy tqdm pyyaml \
+        'scipy<1.15' tqdm pyyaml \
     && pip install --no-cache-dir -e ./openwakeword --no-deps
 
 # openWakeWord's shared feature models. The notebook fetches these as a
