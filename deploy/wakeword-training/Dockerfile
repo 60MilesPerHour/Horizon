@@ -38,6 +38,19 @@ RUN git clone https://github.com/dscripka/openwakeword
 # the notebook's versions — these are what the training code is written
 # against, and unpinning them is how you get errors deep inside speechbrain.
 #
+# tensorflow-cpu is needed by onnx2tf, which converts the trained ONNX model
+# to tflite. The notebook installs onnx2tf without TensorFlow because Colab
+# ships it preinstalled; a slim PyTorch image does not, and the conversion
+# fails at the very end of an hour-long run with ModuleNotFoundError. CPU
+# build deliberately: the conversion is a graph rewrite, not training.
+# tf_keras comes with it because TF 2.16+ ships Keras 3 while onnx2tf still
+# imports the Keras 2 API.
+#
+# openWakeWord's own train.py also tries to export tflite via `onnx_tf`,
+# which is abandoned and requires an ancient TensorFlow. That's why the
+# notebook comments that path out and shells to onnx2tf instead, and why the
+# trainer exits non-zero after successfully writing the .onnx.
+#
 # scipy<1.15 IS required, unlike the datasets pin below: openWakeWord's
 # data.py imports `acoustics`, and acoustics 0.2.6 imports
 # scipy.special.sph_harm, which scipy 1.15 removed. acoustics is abandoned at
@@ -59,6 +72,7 @@ RUN pip install --no-cache-dir \
         datasets \
         onnxruntime==1.22.1 ai_edge_litert==1.4.0 onnxsim \
         onnx==1.19.1 onnx2tf onnx_graphsurgeon sng4onnx \
+        tensorflow-cpu tf_keras \
         'scipy<1.15' tqdm pyyaml \
     && pip install --no-cache-dir -e ./openwakeword --no-deps
 

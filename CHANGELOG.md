@@ -32,6 +32,29 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v3.14.0 — 2026-09-18
+
+Voice mode became a conversation, and three bugs that made it feel broken are
+fixed.
+
+- **Continuous mode.** After a reply finishes it listens again on its own, so
+  a conversation doesn't need a tap per turn. Tapping while it listens means
+  "I'm done"; an End button stops the session; two silent turns end it
+  automatically. The microphone is only ever open during a listening phase.
+- **End-of-turn detection went from 30+ seconds to about a second.** Android
+  frequently ignores the `pauseFor` hint, so a turn ran to the hard listen
+  limit — half a minute of dead air after you stopped talking. Endpointing no
+  longer relies on the platform: it watches the transcript and ends the turn
+  once it stops changing.
+- **The control stays still.** Everything below the transcript had variable
+  height, so the mic drifted under your thumb between turns. It's now an orb
+  in a fixed footprint whose halo reacts to your voice.
+- **No more glitched characters mid-reply.** Streaming text was being sliced
+  at UTF-16 boundaries, so any cut through an emoji briefly emitted half a
+  character.
+- **Faster activation** — the recogniser is prepared when the screen opens
+  rather than on first tap.
+
 ## v3.13.1 — 2026-09-18
 
 Audition TTS voices before choosing one. A play button on every voice picker

@@ -302,15 +302,29 @@ def main() -> int:
         ("augment", "--augment_clips"),
         ("train", "--train_model"),
     ]
+    onnx_model = OUT / f"{model_name}.onnx"
     for name, flag in stages:
         if name not in requested:
             print(f"Skipping {name} (not in --stages)")
             continue
-        run([sys.executable, trainer, "--training_config", str(config_path), flag])
+        try:
+            run([sys.executable, trainer, "--training_config",
+                 str(config_path), flag])
+        except subprocess.CalledProcessError:
+            # openWakeWord's trainer writes the .onnx and *then* tries to
+            # export tflite through `onnx_tf`, which is abandoned and needs an
+            # ancient TensorFlow — so it exits non-zero having already
+            # produced the model we want. Treat that as success and let the
+            # onnx2tf conversion below do the export, which is exactly what
+            # the upstream notebook does.
+            if name == "train" and onnx_model.exists():
+                print(f"\nTrainer exited non-zero but {onnx_model.name} was "
+                      "written — continuing to the tflite conversion.")
+                continue
+            raise
 
     # ONNX -> tflite. `-kat onnx____Flatten_0` names the graph input to keep as
     # a channel-last tensor; it's the input openWakeWord's exporter produces.
-    onnx_model = OUT / f"{model_name}.onnx"
     if not onnx_model.exists():
         raise SystemExit(f"Training finished but {onnx_model} is missing.")
 
