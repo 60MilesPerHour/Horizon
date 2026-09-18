@@ -32,6 +32,38 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.1.1 — 2026-09-18
+
+**iOS: fixes every connection to your own network.** iOS 14 and later gate
+local network access behind a permission that is only ever requested if the
+app declares `NSLocalNetworkUsageDescription`, and the iOS project — never
+built until v4.1.0 — didn't. Without the key there is no prompt and no error:
+the system simply refuses the connections. That broke the network scan *and*
+a manually entered LAN address, which between them are the entire
+self-hosted story. Horizon now declares it, so the "allow local network"
+prompt appears on the first scan or send.
+
+If you installed v4.1.0 and were denied, iOS remembers per app: the prompt
+should reappear on this build, but it can also be set by hand in Settings →
+Privacy & Security → Local Network.
+
+**The app icon is drawn for the squircle now.** It was a circle on a
+transparent square — so iOS, which masks every icon to its own rounded shape
+and renders transparency as black, would have shown a circle floating on a
+black squircle, visibly smaller than its neighbours. The scene is now
+full-bleed: each row of the artwork is extended out to the edge, which for a
+horizon of sky, sun and sea reads as the bands simply continuing, rather than
+scaling the circle up (which crops the palm) or padding with a flat colour
+(which bands against the gradient). The sun and the palm stay inside the safe
+area, so the mask takes only background.
+
+The dark and tinted variants were byte-identical copies of the light one,
+down to the `horizon-dark 1.png` filename. Dark is now dimmed to sit on a
+dark home screen without glowing, and tinted is greyscale, which is what iOS
+maps the user's chosen tint through.
+
+---
+
 ## v4.1.0 — 2026-09-18
 
 An iOS build, a log of what actually left the device, and a rule that stops a

@@ -28,6 +28,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Horizon talks to an Ollama or speech server running on your own network, and can scan for one so you don't have to type its address.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Horizon needs the microphone for voice mode, so you can talk to a model instead of typing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
