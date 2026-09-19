@@ -32,6 +32,89 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.3.0 — 2026-09-18
+
+**Endpointing, rewritten — and the transcription model exonerated.** Away from
+home, voice took too long to notice a sentence had ended, gave up in a noisy
+room, and sometimes answered something nobody said. Measured against the
+self-hosted server first: faster-whisper large-v3-turbo transcribed a test
+sentence *verbatim* under speech-shaped babble at 0 dB SNR, warm, in 0.3 s. The
+recogniser was never the weak link. Deciding when the speaker stopped was.
+
+The energy gate that made that decision had four faults, each independently
+enough to break a turn outdoors:
+
+- **The noise floor could only fall, and was capped at -35 dBFS.** Real
+  ambience on a street or in a busy room peaks between -34 and -14 dBFS, so
+  every frame read as speech, the turn never ended, and it ran to its 90-second
+  cap with you waiting on it.
+- **It wanted 9 dB of separation** where real speech gives 3-10 dB, so speech
+  often never registered at all and a perfectly good recording was discarded.
+- **Automatic gain control was on**, which lifts room noise in the gaps between
+  words — it flattens the exact contrast the gate reads.
+- **One loud frame opened a turn**, so a door slam uploaded a recording of the
+  room, and a recording of the room comes back from Whisper as a confident
+  short sentence.
+
+What replaces it is a separate, testable component with no microphone in the
+loop, verified against level traces taken from real noisy recordings:
+
+- The floor is a **low percentile of a five-second sliding window**, so it
+  adapts to a room that gets louder as well as quieter, and repairs itself when
+  the opening frames are all speech.
+- Speech has to be **sustained**, not loud for one frame; ending a turn uses
+  hysteresis and a drop from your own speech peak, which is what works when the
+  room is nearly as loud as you are.
+- A level that never falls back to the room **ends the turn in seconds**
+  instead of holding the microphone open for a minute.
+- Talking before the microphone is ready still works: the turn latches
+  retroactively rather than being thrown away.
+- **Tapping stop always keeps the audio.** When the room is nearly as loud as
+  you are, a level meter cannot separate the two, but transcription reads those
+  clips fine — so a deliberate stop is never discarded. In a room that loud,
+  voice mode now says so rather than appearing to interrupt you for no reason.
+- A long sentence with no real pause in it is **no longer truncated**. Telling
+  a sustained voice from a sustained noise is a question of whether the level
+  is still moving — a voice swings 8-15 dB between syllables, a road or a fan
+  holds within a couple — and time alone was ending dictation at nine seconds.
+- Timeouts follow **measured** time rather than the rate we asked for, and so
+  do the thresholds; the meters deliver frames on their own schedule, and on a
+  busy phone every threshold was silently two or three times what it said.
+- A capture that dies mid-turn — a call, a headset connecting — is noticed in
+  three seconds instead of producing a minute-long recording of nothing.
+
+Alongside it, three things that were making transcription itself worse:
+
+- **Silence is now filtered server-side** where the server supports it. A clip
+  of nothing produced "Thank you." before, which then went to the model as if
+  you had asked it something.
+- **The language is stated rather than auto-detected.** Detection runs on one
+  short, possibly noisy clip, and when it guesses wrong the result isn't an
+  error, it's fluent nonsense in another language. Settings → Voice now offers
+  this device's language, per-turn detection, or a specific one — and the
+  language picker appears even on devices that report no speech languages of
+  their own, where previously there was nothing to set.
+- **Recordings upload compressed** — the same turn is about ten times smaller
+  with an identical transcript, and off-LAN that size is most of the gap
+  between your last word and the answer starting. Settings → Voice has a switch
+  for servers that need uncompressed audio, such as whisper.cpp.
+
+A transcript that could not have come from the speech that was heard — three
+words out of half a second, or one of Whisper's stock noise phrases — is now
+treated as silence. Short real answers are deliberately left alone: "yeah",
+"stop", "thanks" and "bye" all go through, and a turn you ended by hand is
+never second-guessed on length, because that is the one case where the meter
+has nothing useful to say.
+
+If a server turns an upload down, Horizon changes the request rather than
+failing the same way for ever: the silence filter is a faster-whisper
+extension, so it's withdrawn and retried once when refused, and a server that
+can't read compressed audio switches that off for the session and says so.
+Neither reacts to a timeout or an unreachable server, which say nothing about
+the request.
+
+---
+
 ## v4.2.0 — 2026-09-18
 
 **Voice works off your network.** Transcription and speech had exactly one

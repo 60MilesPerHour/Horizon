@@ -1,24 +1,21 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:path/path.dart' as path;
 import 'package:record/record.dart';
 
 import 'package:horizon/Constants/constants.dart';
+import 'package:horizon/Services/voice/stt/turn_endpointer.dart';
 
 /// Records a single spoken turn and decides when it ended.
 ///
-/// The remote transcription backends need a finished clip, which makes
-/// endpointing our problem rather than the recogniser's. This uses the
-/// recorder's own amplitude meter: speech is detected when the level rises
-/// above a noise floor measured at the start of the turn, and the turn ends
-/// after a short run of silence.
+/// The decision itself lives in [TurnEndpointer] — this class is the plumbing
+/// around it: permissions, the recorder, the file, and the level stream.
 ///
-/// Silero VAD would be more accurate, but it arrives via FFI to ONNX Runtime
-/// — a new native dependency on all four platforms — and an energy gate is
-/// enough to beat the alternative, which is a fixed timeout that both cuts
-/// people off mid-thought and adds dead air to every single reply.
+/// Silero VAD would classify speech more accurately than a level meter, but it
+/// arrives via FFI to ONNX Runtime — a new native dependency on all five
+/// platforms — and the endpointer's sliding-window floor covers the cases
+/// that were actually breaking.
 class VoiceRecorder {
   /// Created on first use. Constructing an AudioRecorder initialises the
   /// platform plugin, which is pure cost for anyone on the device recogniser
@@ -30,38 +27,35 @@ class VoiceRecorder {
   /// to end a turn promptly without waking the CPU constantly.
   static const Duration _pollInterval = Duration(milliseconds: 100);
 
-  /// Silence needed to end the turn once speech has been heard. Long enough
-  /// to survive the pause in "the answer is… four", short enough to feel
-  /// immediate. Far tighter than the platform recogniser's 3 s default.
-  static const Duration _endpointSilence = Duration(milliseconds: 900);
+  /// Ceiling on the gap credited between two meter frames.
+  static const Duration _maxFrameDelta = Duration(seconds: 1);
 
-  /// Give up if nobody says anything at all.
-  static const Duration _noSpeechTimeout = Duration(seconds: 8);
-
-  /// Hard cap on a single turn, so a stuck-open microphone can't record
-  /// forever and then upload it.
-  static const Duration _maxTurn = Duration(seconds: 90);
-
-  /// How far above the measured noise floor counts as speech, in dB.
-  static const double _speechMargin = 9.0;
-
-  /// Frames used to measure the room before deciding what silence sounds
-  /// like. A fixed threshold fails in both directions: too high in a quiet
-  /// room, too low next to a fan.
-  static const int _calibrationFrames = 4;
-
-  /// Ceiling on the measured noise floor, in dBFS.
+  /// Silence from the meter itself that means the capture is over, whatever
+  /// the recorder thinks.
   ///
-  /// People start talking the instant they tap the microphone, so the
-  /// calibration frames often contain speech rather than room tone. Left
-  /// uncapped, the floor lands somewhere near speaking volume, nothing
-  /// afterwards clears floor + margin, and the turn ends on the no-speech
-  /// timeout having thrown away a perfectly good recording.
-  static const double _maxNoiseFloor = -35.0;
+  /// `record`'s amplitude stream is a timer that only ticks while it believes
+  /// it is recording, and it never reports an error: if the audio session
+  /// dies mid-turn — focus lost to a call, a Bluetooth headset connecting —
+  /// the frames simply stop. Without this the endpointer is never asked
+  /// anything again and the turn sits there until the hard cap.
+  static const Duration _meterStallTimeout = Duration(seconds: 3);
+
+  /// Upload the raw WAV instead of compressed audio.
+  ///
+  /// Compressed is the default because off-LAN the clip crosses a mobile
+  /// uplink: the same turn is ~25 KB as 24 kbps AAC against ~260 KB as
+  /// 16 kHz WAV, which is most of the delay between finishing a sentence and
+  /// the answer starting. Transcripts came back identical from both.
+  ///
+  /// Kept as an escape hatch because whisper.cpp's bundled `server` decodes
+  /// WAV only — anything that shells out to ffmpeg (Speaches,
+  /// faster-whisper-server, LocalAI) or any hosted API takes AAC happily.
+  bool uploadUncompressed = false;
 
   StreamSubscription<Amplitude>? _meter;
   Timer? _deadline;
   Completer<_TurnOutcome>? _turn;
+  TurnEndpointer? _endpointer;
 
   /// Live microphone level, 0..1, for the UI to show that it's hearing
   /// something. With a remote backend there are no partial words to display,
@@ -71,6 +65,28 @@ class VoiceRecorder {
 
   bool get isRecording => _turn != null && !_turn!.isCompleted;
 
+  /// How much speech the last turn contained, or null when the turn was kept
+  /// without speech ever being detected — a manual stop somewhere too loud to
+  /// tell the two apart.
+  ///
+  /// Null means "no basis to judge the transcript", not "no speech": a caller
+  /// that treats it as zero throws away exactly the turns the manual stop
+  /// exists to rescue.
+  Duration? lastTurnSpeechDuration;
+
+  /// Set when the last turn had to be ended because the level never dropped
+  /// back to the room — somewhere too loud to hear the end of a sentence.
+  bool lastTurnEndedOnNoise = false;
+
+  /// The room level measured during the last turn, in dBFS, or null if no
+  /// turn has run.
+  ///
+  /// Read to decide whether to warn: above about -22 dBFS the ambience is
+  /// within a few dB of an ordinary speaking voice, which is where level
+  /// metering stops being able to hear a sentence end at all and turns start
+  /// getting cut mid-word.
+  double? lastTurnRoomDb;
+
   Future<bool> hasPermission() async {
     try {
       return await _recorder.hasPermission();
@@ -79,35 +95,21 @@ class VoiceRecorder {
     }
   }
 
-  /// Records until the speaker stops, and returns the WAV path — or null if
+  /// Records until the speaker stops, and returns the audio path — or null if
   /// nothing was said, permission was refused, or [cancel] was called.
-  ///
-  /// 16 kHz mono WAV deliberately: it's what Whisper resamples to anyway, and
-  /// every implementation accepts it without needing ffmpeg in the container.
   Future<String?> recordTurn() async {
     if (isRecording) return null;
     if (!await hasPermission()) return null;
 
     final directory = await _recordingsDirectory();
+    final encoder = await _chooseEncoder();
     final file = path.join(
       directory.path,
-      'turn_${DateTime.now().microsecondsSinceEpoch}.wav',
+      'turn_${DateTime.now().microsecondsSinceEpoch}.${_extensionFor(encoder)}',
     );
 
     try {
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
-          // Both help a phone held at arm's length; the recorder ignores them
-          // where the platform doesn't offer them.
-          autoGain: true,
-          echoCancel: true,
-          noiseSuppress: true,
-        ),
-        path: file,
-      );
+      await _recorder.start(_configFor(encoder), path: file);
     } catch (_) {
       return null;
     }
@@ -115,64 +117,75 @@ class VoiceRecorder {
     final turn = Completer<_TurnOutcome>();
     _turn = turn;
 
-    var speechHeard = false;
-    var silenceSince = DateTime.now();
-    var calibrationSamples = <double>[];
-    double? noiseFloor;
-    final startedAt = DateTime.now();
+    final endpointer = TurnEndpointer(frame: _pollInterval);
+    _endpointer = endpointer;
+    lastTurnSpeechDuration = null;
+    lastTurnEndedOnNoise = false;
+    lastTurnRoomDb = null;
 
-    _deadline = Timer(_maxTurn, () {
-      if (!turn.isCompleted) turn.complete(_TurnOutcome.ended);
+    // Real time between meter frames, rather than trusting the interval we
+    // asked for: platforms deliver on their own schedule, and every timeout
+    // in the endpointer is denominated in these.
+    final since = Stopwatch()..start();
+    final total = Stopwatch()..start();
+
+    // Ends the turn on the endpointer's strict terms if the meter stops
+    // delivering, or if the whole thing overruns. Strict deliberately: a turn
+    // that ends because capture broke has no speech to vouch for it, and
+    // uploading a minute of whatever the microphone caught puts a
+    // hallucinated transcript in front of the model as if it were a question.
+    _deadline = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (turn.isCompleted) return;
+      final stalled = since.elapsed > _meterStallTimeout;
+      final overrun = total.elapsed >
+          TurnEndpointer.maxTurn + const Duration(seconds: 5);
+      if (!stalled && !overrun) return;
+      turn.complete(endpointer.worthUploading
+          ? _TurnOutcome.ended
+          : _TurnOutcome.silent);
     });
 
     _meter = _recorder.onAmplitudeChanged(_pollInterval).listen((amplitude) {
-      // `current` is dBFS: 0 is clipping, about -60 is silence.
-      final db = amplitude.current.isFinite ? amplitude.current : -60.0;
-      _levels.add(((db + 50) / 50).clamp(0.0, 1.0));
+      // Bounded: a frozen app or a stalled meter shouldn't hand the
+      // endpointer a several-second jump, and a burst of frames shouldn't
+      // report zero elapsed time either.
+      final measured = since.elapsed;
+      since.reset();
+      final delta = measured < _pollInterval ~/ 4
+          ? _pollInterval ~/ 4
+          : (measured > _maxFrameDelta ? _maxFrameDelta : measured);
 
-      if (noiseFloor == null) {
-        calibrationSamples.add(db);
-        if (calibrationSamples.length < _calibrationFrames) return;
-        // Quietest calibration frame, so a cough during calibration doesn't
-        // raise the floor, then capped in case the whole window was speech.
-        noiseFloor =
-            math.min(calibrationSamples.reduce(math.min), _maxNoiseFloor);
-        return;
-      }
+      // `current` is dBFS: 0 is clipping, about -60 is silence. On Android
+      // it's the frame peak rather than RMS, which the endpointer smooths.
+      final signal = endpointer.add(amplitude.current, delta: delta);
+      _levels.add(endpointer.level);
 
-      // Keep tracking downward: a floor measured while someone was still
-      // talking corrects itself the moment a genuinely quiet frame arrives.
-      if (db < noiseFloor!) noiseFloor = db;
-
-      final isSpeech = db > noiseFloor! + _speechMargin;
-
-      if (isSpeech) {
-        speechHeard = true;
-        silenceSince = DateTime.now();
-        return;
-      }
-
-      final now = DateTime.now();
-      if (speechHeard) {
-        if (now.difference(silenceSince) >= _endpointSilence) {
-          if (!turn.isCompleted) turn.complete(_TurnOutcome.ended);
-        }
-      } else if (now.difference(startedAt) >= _noSpeechTimeout) {
-        if (!turn.isCompleted) turn.complete(_TurnOutcome.silent);
+      if (turn.isCompleted) return;
+      switch (signal) {
+        case TurnSignal.listening:
+          break;
+        case TurnSignal.ended:
+          turn.complete(_TurnOutcome.ended);
+        case TurnSignal.silent:
+          turn.complete(_TurnOutcome.silent);
       }
     }, onError: (_) {
-      if (!turn.isCompleted) turn.complete(_TurnOutcome.ended);
+      if (turn.isCompleted) return;
+      turn.complete(endpointer.worthUploading
+          ? _TurnOutcome.ended
+          : _TurnOutcome.silent);
     });
 
     final outcome = await turn.future;
     await _teardown();
 
+    lastTurnSpeechDuration =
+        endpointer.speechHeard ? endpointer.speechDuration : null;
+    lastTurnEndedOnNoise = endpointer.endedOnNoise;
+    lastTurnRoomDb = endpointer.noiseFloorDb;
+
     final recorded = await _stopRecorder();
     if (outcome != _TurnOutcome.ended || recorded == null) {
-      await _discard(recorded);
-      return null;
-    }
-    if (!speechHeard) {
       await _discard(recorded);
       return null;
     }
@@ -182,7 +195,14 @@ class VoiceRecorder {
   /// Ends the turn now and keeps what was recorded — the user tapping "stop".
   void finish() {
     final turn = _turn;
-    if (turn != null && !turn.isCompleted) turn.complete(_TurnOutcome.ended);
+    if (turn == null || turn.isCompleted) return;
+    // The endpointer decides whether there is anything worth uploading; on a
+    // deliberate stop it keeps any recording of a plausible length, detected
+    // speech or not.
+    final signal = _endpointer?.finishNow() ?? TurnSignal.ended;
+    turn.complete(
+      signal == TurnSignal.ended ? _TurnOutcome.ended : _TurnOutcome.silent,
+    );
   }
 
   /// Ends the turn and throws the audio away.
@@ -201,12 +221,52 @@ class VoiceRecorder {
     await _levels.close();
   }
 
+  /// 16 kHz mono, and AAC unless [uploadUncompressed] says otherwise: 16 kHz
+  /// is what Whisper resamples to anyway, and mono halves the upload again.
+  ///
+  /// `autoGain` is deliberately **off**. Android's AutomaticGainControl
+  /// effect normalises the capture level, which means it lifts room noise in
+  /// the gaps between words — it flattens exactly the contrast the endpointer
+  /// reads, and it was on. Echo cancellation and noise suppression stay on;
+  /// they help a phone held at arm's length and they don't fight the meter.
+  RecordConfig _configFor(AudioEncoder encoder) => RecordConfig(
+        encoder: encoder,
+        sampleRate: 16000,
+        numChannels: 1,
+        bitRate: 24000,
+        autoGain: false,
+        echoCancel: true,
+        noiseSuppress: true,
+        androidConfig: const AndroidRecordConfig(
+          // Tuned for recognition: the platform leaves its own gain control
+          // out of this path, which is what we want for both the transcript
+          // and the level meter.
+          audioSource: AndroidAudioSource.voiceRecognition,
+        ),
+      );
+
+  Future<AudioEncoder> _chooseEncoder() async {
+    if (uploadUncompressed) return AudioEncoder.wav;
+    try {
+      if (await _recorder.isEncoderSupported(AudioEncoder.aacLc)) {
+        return AudioEncoder.aacLc;
+      }
+    } catch (_) {
+      // A platform that can't answer is a platform that gets WAV.
+    }
+    return AudioEncoder.wav;
+  }
+
+  static String _extensionFor(AudioEncoder encoder) =>
+      encoder == AudioEncoder.aacLc ? 'm4a' : 'wav';
+
   Future<void> _teardown() async {
     await _meter?.cancel();
     _meter = null;
     _deadline?.cancel();
     _deadline = null;
     _turn = null;
+    _endpointer = null;
   }
 
   Future<String?> _stopRecorder() async {

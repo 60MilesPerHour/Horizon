@@ -83,6 +83,21 @@ class WhisperTranscriber implements RecordedAudioTranscriber {
   static Uri transcriptionUrl(String base) =>
       RemoteEndpoint.resolve(base, '/v1/audio/transcriptions');
 
+  /// Ask the server to drop non-speech regions before decoding.
+  ///
+  /// Worth doing wherever it's available: without it, a clip that's mostly
+  /// room noise comes back as a confident short sentence — "Thank you." is
+  /// the classic — which then gets sent to the model as if it were a
+  /// question. Verified against Speaches with a noise-only clip: hallucinated
+  /// text without the filter, empty with it. It also trims the decode.
+  ///
+  /// It's a faster-whisper extension rather than part of the OpenAI API, so
+  /// a server is free to reject the request for carrying it. Asked for
+  /// optimistically and withdrawn on refusal — see [transcribe] — rather than
+  /// gated on a list of known hostnames, which silently becomes wrong as
+  /// soon as someone runs something not on it.
+  static const String vadFilterField = 'vad_filter';
+
   @override
   Future<SttResult> transcribe(String path, {String? languageCode}) async {
     if (!isConfigured) {
@@ -100,39 +115,16 @@ class WhisperTranscriber implements RecordedAudioTranscriber {
       // Rebuilt per candidate: a MultipartRequest can only be sent once, and
       // the URL and headers differ between the LAN address and the tunnel.
       return await endpoint.withFailover((base) async {
-        final request =
-            http.MultipartRequest('POST', transcriptionUrl(base))
-              ..headers.addAll(endpoint.headersFor(base, bearerToken: apiKey));
-        request.fields['model'] =
-            model.trim().isEmpty ? 'whisper-1' : model.trim();
-        request.fields['response_format'] = 'json';
-        if (languageCode != null && languageCode.isNotEmpty) {
-          // The API wants a bare ISO-639-1 code, but Horizon stores recogniser
-          // locales in `en_US` / `en-GB` form.
-          request.fields['language'] =
-              languageCode.split(RegExp('[-_]')).first;
+        final result = await _post(base, path, languageCode, vadFilter: true);
+        // A server that turned the request down may simply not know
+        // `vad_filter`. Withdraw it and ask once more before giving up:
+        // failover deliberately doesn't retry a server that answered, so
+        // without this a server that dislikes the field fails every single
+        // turn with no way back.
+        if (result.serverRejected) {
+          return await _post(base, path, languageCode, vadFilter: false);
         }
-        request.files.add(await http.MultipartFile.fromPath('file', path));
-
-        final streamed =
-            await HorizonHttp.client.send(request).timeout(_timeout);
-        final body = await streamed.stream.bytesToString();
-
-        // Access redirects an unauthorised request to its login page and the
-        // client follows it, so this arrives as a 200 full of HTML. Checked
-        // before the status code for exactly that reason.
-        final blocked = endpoint.describeAccessBlock(body, base);
-        if (blocked != null) return SttResult.failure(blocked);
-
-        if (streamed.statusCode != 200) {
-          return SttResult.failure(
-            'Whisper server: ${HttpErrorFormatter.formatHttpError(streamed.statusCode, body: body)}',
-          );
-        }
-
-        final decoded = json.decode(body);
-        final text = decoded is Map ? (decoded['text'] ?? '').toString() : '';
-        return SttResult(text.trim());
+        return result;
       });
     } on TimeoutException {
       return SttResult.failure(
@@ -150,5 +142,45 @@ class WhisperTranscriber implements RecordedAudioTranscriber {
     } catch (e) {
       return SttResult.failure('Transcription failed: $e');
     }
+  }
+
+  Future<SttResult> _post(
+    String base,
+    String path,
+    String? languageCode, {
+    required bool vadFilter,
+  }) async {
+    final request = http.MultipartRequest('POST', transcriptionUrl(base))
+      ..headers.addAll(endpoint.headersFor(base, bearerToken: apiKey));
+    request.fields['model'] = model.trim().isEmpty ? 'whisper-1' : model.trim();
+    request.fields['response_format'] = 'json';
+    if (vadFilter) request.fields[vadFilterField] = 'true';
+    if (languageCode != null && languageCode.isNotEmpty) {
+      // The API wants a bare ISO-639-1 code, but Horizon stores recogniser
+      // locales in `en_US` / `en-GB` form.
+      request.fields['language'] = languageCode.split(RegExp('[-_]')).first;
+    }
+    request.files.add(await http.MultipartFile.fromPath('file', path));
+
+    final streamed = await HorizonHttp.client.send(request).timeout(_timeout);
+    final body = await streamed.stream.bytesToString();
+
+    // Access redirects an unauthorised request to its login page and the
+    // client follows it, so this arrives as a 200 full of HTML. Checked
+    // before the status code for exactly that reason.
+    final blocked = endpoint.describeAccessBlock(body, base);
+    if (blocked != null) return SttResult.failure(blocked);
+
+    if (streamed.statusCode != 200) {
+      return SttResult.failure(
+        'Whisper server: ${HttpErrorFormatter.formatHttpError(streamed.statusCode, body: body)}',
+        serverRejected: true,
+        statusCode: streamed.statusCode,
+      );
+    }
+
+    final decoded = json.decode(body);
+    final text = decoded is Map ? (decoded['text'] ?? '').toString() : '';
+    return SttResult(text.trim());
   }
 }

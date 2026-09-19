@@ -101,9 +101,11 @@ class VoiceSessionController extends ChangeNotifier {
   bool get showsLevelMeter =>
       !_recognition.effectiveBackend.hasPartialResults;
 
-  /// Set when the chosen backend wasn't usable and the device recogniser was
-  /// used for the last turn instead.
-  String? get fallbackNotice => _recognition.lastFallbackReason;
+  /// Anything the last turn needs to say for itself: that the chosen backend
+  /// wasn't usable and the device recogniser covered for it, or that the turn
+  /// was ended by the endpointer because the room never went quiet.
+  String? get fallbackNotice =>
+      _recognition.lastFallbackReason ?? _recognition.lastTurnNotice;
 
   @override
   void dispose() {

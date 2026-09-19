@@ -173,7 +173,9 @@ void main() async {
   final elevenLabsTranscriber = ElevenLabsTranscriber(apiKey: elevenLabsKey);
   final speechInput = SpeechInputService(
     device: speechRecognition,
-    recorder: VoiceRecorder(),
+    recorder: VoiceRecorder()
+      ..uploadUncompressed =
+          (settingsBox.get('voice_upload_wav') as bool?) ?? false,
     whisper: whisperTranscriber,
     elevenLabs: elevenLabsTranscriber,
   )

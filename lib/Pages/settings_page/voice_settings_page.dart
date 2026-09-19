@@ -307,7 +307,29 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
           secureStorageKey: 'whisper_api_key',
           onChanged: (value) => _whisper.apiKey = value,
         ),
+        _uncompressedUploadTile(),
       ],
+    );
+  }
+
+  /// Compressed upload is the default and should stay that way away from
+  /// home: the same turn is roughly ten times smaller, which is most of the
+  /// wait between finishing a sentence and hearing an answer over mobile
+  /// data. whisper.cpp's bundled server is the one thing that needs the WAV.
+  Widget _uncompressedUploadTile() {
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Upload uncompressed audio'),
+      subtitle: const Text(
+        'Slower away from home. Only needed if your server rejects compressed '
+        'recordings, e.g. whisper.cpp.',
+      ),
+      value: _input.recorder.uploadUncompressed,
+      onChanged: (value) async {
+        _input.recorder.uploadUncompressed = value;
+        await _settings.put('voice_upload_wav', value);
+        if (mounted) setState(() {});
+      },
     );
   }
 
@@ -332,43 +354,72 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
   Widget _recognitionLocalePicker() {
     final current = _settings.get('voice_locale') as String? ?? '';
+    final theme = Theme.of(context);
 
     return FutureBuilder<List<({String id, String name})>>(
       future: _input.locales(),
       builder: (context, snapshot) {
         final locales = snapshot.data ?? const [];
-        if (locales.isEmpty) {
-          return Text(
-            snapshot.connectionState == ConnectionState.waiting
-                ? 'Checking available speech languages…'
-                : 'The device reports no speech languages. A Whisper server or '
-                    'Scribe will still work.',
-            style: Theme.of(context).textTheme.bodySmall,
-          );
-        }
+        final known = {
+          '',
+          SpeechInputService.autoDetectLocale,
+          ...locales.map((l) => l.id),
+        };
+        final value = known.contains(current) ? current : '';
 
-        final value = locales.any((l) => l.id == current) ? current : '';
-        return DropdownButtonFormField<String>(
-          initialValue: value,
-          decoration: const InputDecoration(
-            labelText: 'Language',
-            border: OutlineInputBorder(),
-          ),
-          items: [
-            const DropdownMenuItem(
-              value: '',
-              child: Text('Automatic / device default'),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Rendered even when the device reports no speech languages,
+            // which it does on plenty of Android builds. It used to be
+            // replaced by an explanatory line in that case, leaving no way
+            // to choose — including no way to stop a Whisper server being
+            // told to decode in this device's language.
+            DropdownButtonFormField<String>(
+              initialValue: value,
+              decoration: const InputDecoration(
+                labelText: 'Language',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: '',
+                  child: Text("This device's language"),
+                ),
+                const DropdownMenuItem(
+                  value: SpeechInputService.autoDetectLocale,
+                  child: Text('Detect for each turn'),
+                ),
+                ...locales.map(
+                  (l) => DropdownMenuItem(value: l.id, child: Text(l.name)),
+                ),
+              ],
+              onChanged: (selected) async {
+                final id = selected ?? '';
+                _input.localeId = id;
+                await _settings.put('voice_locale', id);
+                if (mounted) setState(() {});
+              },
             ),
-            ...locales.map(
-              (l) => DropdownMenuItem(value: l.id, child: Text(l.name)),
+            const SizedBox(height: 4),
+            Text(
+              value == SpeechInputService.autoDetectLocale
+                  // Said plainly, because it's the option that looks safest
+                  // and isn't: detection runs on one short clip, and a wrong
+                  // guess reads as fluent nonsense rather than an error.
+                  ? 'A Whisper server or Scribe will work out the language '
+                      'from each recording. Less reliable on a short or noisy '
+                      'clip than naming it.'
+                  : locales.isEmpty &&
+                          snapshot.connectionState != ConnectionState.waiting
+                      ? 'The device reports no speech languages, so the device '
+                          'recogniser may not work. A Whisper server or Scribe '
+                          'still will.'
+                      : 'Used by the device recogniser, and sent to a Whisper '
+                          'server or Scribe so it need not guess.',
+              style: theme.textTheme.bodySmall,
             ),
           ],
-          onChanged: (selected) async {
-            final id = selected ?? '';
-            _input.localeId = id;
-            await _settings.put('voice_locale', id);
-            if (mounted) setState(() {});
-          },
         );
       },
     );

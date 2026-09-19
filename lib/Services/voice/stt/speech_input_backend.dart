@@ -66,8 +66,27 @@ class SttResult {
   /// message on screen, not take the session down.
   final String? error;
 
-  const SttResult(this.text) : error = null;
-  const SttResult.failure(this.error) : text = '';
+  /// True when the server answered and turned the request down, rather than
+  /// the request never arriving. The two call for opposite responses: a
+  /// rejection means *this* request was wrong and something about it should
+  /// change; a timeout means try the same thing again later.
+  final bool serverRejected;
+
+  /// HTTP status behind a rejection, where there was one. Callers that want
+  /// to change the request and try again need to know *what* was refused —
+  /// an unreadable body and a bad key are both rejections and want opposite
+  /// responses.
+  final int? statusCode;
+
+  const SttResult(this.text)
+      : error = null,
+        serverRejected = false,
+        statusCode = null;
+  const SttResult.failure(
+    this.error, {
+    this.serverRejected = false,
+    this.statusCode,
+  }) : text = '';
 
   bool get isEmpty => text.trim().isEmpty;
 }
@@ -83,6 +102,6 @@ abstract class RecordedAudioTranscriber {
   /// Why it isn't usable, for the settings UI. Null when [isConfigured].
   String? get configurationHint;
 
-  /// Transcribes the WAV file at [path]. Never throws.
+  /// Transcribes the audio file at [path]. Never throws.
   Future<SttResult> transcribe(String path, {String? languageCode});
 }
