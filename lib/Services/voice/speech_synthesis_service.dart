@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import 'package:horizon/Utils/horizon_http.dart';
+import 'package:horizon/Utils/remote_endpoint.dart';
 
 /// Which engine speaks the assistant's replies.
 enum SpeechEngine {
@@ -90,7 +91,11 @@ class SpeechSynthesisService {
   String systemVoiceLocale;
 
   /// Self-hosted `/v1/audio/speech` server root, e.g. `http://172.16.23.20:8000`.
-  String selfHostedBaseUrl;
+  /// Where the speech server lives, at home and away. See
+  /// [WhisperTranscriber.endpoint] — same server, same problem: one LAN
+  /// address meant spoken replies fell back to the device voice off the
+  /// network, which sounds like the self-hosted voice having broken.
+  final RemoteEndpoint selfHosted;
 
   /// Model the self-hosted server expects, e.g.
   /// `speaches-ai/Kokoro-82M-v1.0-ONNX`.
@@ -111,19 +116,41 @@ class SpeechSynthesisService {
     String? elevenLabsVoiceId,
     String? systemVoiceLocale,
     String? selfHostedBaseUrl,
+    String? selfHostedBackupUrl,
+    String? cfAccessClientId,
+    String? cfAccessClientSecret,
     String? selfHostedModel,
     String? selfHostedVoice,
     String? selfHostedKey,
     double? rate,
-  })  : engine = engine ?? SpeechEngine.system,
+  })  : selfHosted = RemoteEndpoint(
+          primary: selfHostedBaseUrl,
+          backup: selfHostedBackupUrl,
+          cfAccessClientId: cfAccessClientId,
+          cfAccessClientSecret: cfAccessClientSecret,
+        ),
+        engine = engine ?? SpeechEngine.system,
         elevenLabsKey = elevenLabsKey ?? '',
         elevenLabsVoiceId = elevenLabsVoiceId ?? _defaultVoiceId,
         systemVoiceLocale = systemVoiceLocale ?? '',
-        selfHostedBaseUrl = selfHostedBaseUrl ?? '',
         selfHostedModel = selfHostedModel ?? defaultSelfHostedModel,
         selfHostedVoice = selfHostedVoice ?? defaultSelfHostedVoice,
         selfHostedKey = selfHostedKey ?? '',
         rate = rate ?? 1.0;
+
+  /// Settings mutates the addresses through these so the sticky choice of
+  /// which one last answered is dropped with the value it referred to.
+  String get selfHostedBaseUrl => selfHosted.primary;
+  set selfHostedBaseUrl(String value) {
+    selfHosted.primary = value;
+    selfHosted.reset();
+  }
+
+  String get selfHostedBackupUrl => selfHosted.backup;
+  set selfHostedBackupUrl(String value) {
+    selfHosted.backup = value;
+    selfHosted.reset();
+  }
 
   /// Speaches' Kokoro build, the usual reason to run one of these at all.
   static const String defaultSelfHostedModel =
@@ -187,20 +214,17 @@ class SpeechSynthesisService {
 
   bool get isElevenLabsConfigured => elevenLabsKey.trim().isNotEmpty;
 
-  bool get isSelfHostedConfigured => selfHostedBaseUrl.trim().isNotEmpty;
+  bool get isSelfHostedConfigured => selfHosted.isConfigured;
 
   /// Resolved `/v1/audio/speech` endpoint. Tolerates a missing scheme, a
   /// trailing slash, and a base that already ends in `/v1` — the same
   /// leniency the Whisper transcriber needs, and for the same reason: these
   /// servers get written down both ways.
-  Uri selfHostedEndpoint({String? override}) {
-    var base = (override ?? selfHostedBaseUrl).trim();
-    if (!base.startsWith('http://') && !base.startsWith('https://')) {
-      base = 'http://$base';
-    }
-    base = base.replaceAll(RegExp(r'/+$'), '');
-    if (base.endsWith('/v1')) return Uri.parse('$base/audio/speech');
-    return Uri.parse('$base/v1/audio/speech');
+  Uri? selfHostedEndpoint({String? override}) {
+    final candidates = selfHosted.candidates();
+    final base = override ?? (candidates.isEmpty ? null : candidates.first);
+    if (base == null || base.trim().isEmpty) return null;
+    return RemoteEndpoint.resolve(base, '/v1/audio/speech');
   }
 
   /// Queues [text] to be spoken. Returns immediately.
@@ -414,14 +438,14 @@ class SpeechSynthesisService {
     String? baseUrl,
   }) async {
     if (baseUrl == null && !isSelfHostedConfigured) return null;
-    try {
+
+    Future<Uint8List?> post(String base) async {
       final response = await HorizonHttp.client
           .post(
-            selfHostedEndpoint(override: baseUrl),
+            RemoteEndpoint.resolve(base, '/v1/audio/speech'),
             headers: {
               'content-type': 'application/json',
-              if (selfHostedKey.trim().isNotEmpty)
-                'Authorization': 'Bearer ${selfHostedKey.trim()}',
+              ...selfHosted.headersFor(base, bearerToken: selfHostedKey),
             },
             body: json.encode({
               'model': (model ?? selfHostedModel).trim().isEmpty
@@ -441,7 +465,23 @@ class SpeechSynthesisService {
 
       if (response.statusCode != 200) return null;
       if (response.bodyBytes.isEmpty) return null;
+      // An Access login page is a 200 with an HTML body, and handing that to
+      // the audio player produces silence rather than an error.
+      if (selfHosted.describeAccessBlock(
+              utf8.decode(response.bodyBytes.take(512).toList(),
+                  allowMalformed: true),
+              base) !=
+          null) {
+        return null;
+      }
       return response.bodyBytes;
+    }
+
+    try {
+      // A preview aims at exactly the address being auditioned; a real
+      // utterance is free to fall over to the remote one.
+      if (baseUrl != null) return await post(baseUrl);
+      return await selfHosted.withFailover(post);
     } catch (_) {
       // Falls through to the device voice for this sentence.
       return null;

@@ -281,10 +281,18 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         SpeechServerFields(
           task: 'automatic-speech-recognition',
           initialBaseUrl: _settings.get('whisper_base_url') as String? ?? '',
+          initialBackupUrl:
+              _settings.get('whisper_backup_url') as String? ?? '',
           initialModel: _settings.get('whisper_model') as String? ?? '',
+          cfAccessClientId: _whisper.endpoint.cfAccessClientId,
+          cfAccessClientSecret: _whisper.endpoint.cfAccessClientSecret,
           onBaseUrlChanged: (value) {
             _whisper.baseUrl = value;
             _settings.put('whisper_base_url', value);
+          },
+          onBackupUrlChanged: (value) {
+            _whisper.backupUrl = value;
+            _settings.put('whisper_backup_url', value);
           },
           onModelChanged: (value) {
             _whisper.model = value;
@@ -452,6 +460,12 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     final whisperUrl =
         (_settings.get('whisper_base_url') as String? ?? '').trim();
     final current = _synthesis.selfHostedBaseUrl.trim();
+    // Both addresses prefill from the transcription server for the same
+    // reason: Speaches answers transcription and speech on one host, so the
+    // remote hostname is the same remote hostname.
+    final whisperRemote =
+        (_settings.get('whisper_backup_url') as String? ?? '').trim();
+    final currentRemote = _synthesis.selfHostedBackupUrl.trim();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -469,12 +483,19 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         SpeechServerFields(
           task: 'text-to-speech',
           initialBaseUrl: current.isEmpty ? whisperUrl : current,
+          initialBackupUrl: currentRemote.isEmpty ? whisperRemote : currentRemote,
           initialModel: _synthesis.selfHostedModel,
+          cfAccessClientId: _synthesis.selfHosted.cfAccessClientId,
+          cfAccessClientSecret: _synthesis.selfHosted.cfAccessClientSecret,
           initialVoice: _synthesis.selfHostedVoice,
           showVoicePicker: true,
           onBaseUrlChanged: (value) {
             _synthesis.selfHostedBaseUrl = value;
             _settings.put('tts_base_url', value);
+          },
+          onBackupUrlChanged: (value) {
+            _synthesis.selfHostedBackupUrl = value;
+            _settings.put('tts_backup_url', value);
           },
           onModelChanged: (value) {
             _synthesis.selfHostedModel = value;

@@ -139,7 +139,7 @@ void main() {
       final s = SpeechSynthesisService(
         selfHostedBaseUrl: 'http://172.16.23.20:8000',
       );
-      expect(s.selfHostedEndpoint().toString(),
+      expect(s.selfHostedEndpoint()!.toString(),
           'http://172.16.23.20:8000/v1/audio/speech');
     });
 
@@ -147,7 +147,7 @@ void main() {
       final s = SpeechSynthesisService(
         selfHostedBaseUrl: 'http://speaches.test/',
       );
-      expect(s.selfHostedEndpoint().toString(),
+      expect(s.selfHostedEndpoint()!.toString(),
           'http://speaches.test/v1/audio/speech');
     });
 
@@ -155,13 +155,13 @@ void main() {
       final s = SpeechSynthesisService(
         selfHostedBaseUrl: 'http://speaches.test/v1',
       );
-      expect(s.selfHostedEndpoint().toString(),
+      expect(s.selfHostedEndpoint()!.toString(),
           'http://speaches.test/v1/audio/speech');
     });
 
     test('a missing scheme is assumed to be http', () {
       final s = SpeechSynthesisService(selfHostedBaseUrl: '172.16.23.20:8000');
-      expect(s.selfHostedEndpoint().scheme, 'http');
+      expect(s.selfHostedEndpoint()!.scheme, 'http');
     });
 
     test('defaults target Speaches with Kokoro', () {
@@ -177,8 +177,8 @@ void main() {
       final s = SpeechSynthesisService(
         selfHostedBaseUrl: 'http://configured.test',
       );
-      expect(s.selfHostedEndpoint().host, 'configured.test');
-      expect(s.selfHostedEndpoint(override: 'http://typed.test:8001').host,
+      expect(s.selfHostedEndpoint()!.host, 'configured.test');
+      expect(s.selfHostedEndpoint(override: 'http://typed.test:8001')!.host,
           'typed.test');
       expect(s.selfHostedBaseUrl, 'http://configured.test',
           reason: 'an override must not mutate the configured address');

@@ -32,6 +32,50 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.2.0 — 2026-09-18
+
+**Voice works off your network.** Transcription and speech had exactly one
+server address each, and it was an RFC1918 LAN IP. Leave the house and both
+backends fail, fall back to the device recogniser and the device voice, and
+say nothing about why — so voice looked like a feature that only worked at
+home, and the network scan that sets those addresses up is LAN-only by
+construction and can't help from outside.
+
+The chat path solved this in v3.7.0 and v3.7.3: a second address, sticky
+failover between them, and a Cloudflare Access service token on the https
+one. Voice never got any of it. It does now, factored into a shared
+`RemoteEndpoint` rather than copied, because a third backend would otherwise
+copy it a third time.
+
+- **Remote address** field on both speech server sections. A Cloudflare
+  tunnel hostname here carries the Access service token already configured in
+  Settings → Server — one tunnel, one token, nothing extra to enter.
+- **Sticky failover.** Whichever address last answered is tried first. This
+  matters more for voice than it did for chat: away from home the LAN address
+  costs a full 6-second connect timeout, and paying that before every
+  transcription and every spoken sentence is the difference between a usable
+  assistant and an unusable one.
+- **The Access token rides on https only**, the same rule the chat path uses
+  and for the same reason — the LAN address is cleartext and ignores the
+  headers, so sending a long-lived secret to it is pure downside.
+- **An Access block is now readable.** Access answers an unauthorised request
+  with a redirect to its login page, which the HTTP client follows, so the
+  app receives 200 OK full of HTML. Transcription reported that as a parse
+  error and speech played it as silence. Both now say whether the token is
+  missing or was rejected.
+- A reachable server that returns an error does **not** fail over. Retrying a
+  real error against the other address produces the same error twice and
+  doubles the wait.
+- The model and voice pickers read through the same path, so they populate
+  from the remote server too. Configuring voice from outside the house is the
+  normal case for the remote field — you add it precisely when you're
+  somewhere the LAN address doesn't answer.
+- Both speech addresses are included in config backup. A restore that brought
+  back the chat server but not the speech one left voice quietly on the
+  device recogniser.
+
+---
+
 ## v4.1.1 — 2026-09-18
 
 **iOS: fixes every connection to your own network.** iOS 14 and later gate

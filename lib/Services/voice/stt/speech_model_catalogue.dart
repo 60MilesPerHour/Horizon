@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:horizon/Utils/horizon_http.dart';
+import 'package:horizon/Utils/remote_endpoint.dart';
 
 /// One model offered by a speech server.
 class SpeechServerModel {
@@ -40,9 +41,13 @@ class SpeechModelCatalogue {
 
   /// Fetches the installed models. Returns an empty list on any failure, so a
   /// picker degrades to the free-text fallback rather than blocking setup.
+  /// [endpoint] supplies the Access headers when the address is a tunnel
+  /// hostname — without them the picker reads Access's login page as an empty
+  /// model list, and the remote server looks like it has nothing installed.
   static Future<List<SpeechServerModel>> fetch(
     String baseUrl, {
     String apiKey = '',
+    RemoteEndpoint? endpoint,
   }) async {
     final uri = _endpoint(baseUrl);
     if (uri == null) return const [];
@@ -50,10 +55,11 @@ class SpeechModelCatalogue {
     try {
       final response = await HorizonHttp.client.get(
         uri,
-        headers: {
-          if (apiKey.trim().isNotEmpty)
-            'Authorization': 'Bearer ${apiKey.trim()}',
-        },
+        headers: endpoint?.headersFor(baseUrl, bearerToken: apiKey) ??
+            {
+              if (apiKey.trim().isNotEmpty)
+                'Authorization': 'Bearer ${apiKey.trim()}',
+            },
       ).timeout(_timeout);
       if (response.statusCode != 200) return const [];
 
@@ -100,13 +106,7 @@ class SpeechModelCatalogue {
   /// Same leniency as the transcriber and synthesiser: missing scheme,
   /// trailing slash, or a base already ending in `/v1`.
   static Uri? _endpoint(String baseUrl) {
-    var base = baseUrl.trim();
-    if (base.isEmpty) return null;
-    if (!base.startsWith('http://') && !base.startsWith('https://')) {
-      base = 'http://$base';
-    }
-    base = base.replaceAll(RegExp(r'/+$'), '');
-    final path = base.endsWith('/v1') ? '$base/models' : '$base/v1/models';
-    return Uri.tryParse(path);
+    if (baseUrl.trim().isEmpty) return null;
+    return RemoteEndpoint.resolve(baseUrl, '/v1/models');
   }
 }

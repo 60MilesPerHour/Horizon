@@ -162,8 +162,13 @@ void main() async {
   final speechRecognition = SpeechRecognitionService();
   final whisperTranscriber = WhisperTranscriber(
     baseUrl: settingsBox.get('whisper_base_url') as String?,
+    backupUrl: settingsBox.get('whisper_backup_url') as String?,
     model: settingsBox.get('whisper_model') as String?,
     apiKey: whisperKey,
+    // The same Access service token the chat path uses: one tunnel, one
+    // token, and nothing extra to enter for the speech hostname.
+    cfAccessClientId: cfAccessClientId,
+    cfAccessClientSecret: cfAccessClientSecret,
   );
   final elevenLabsTranscriber = ElevenLabsTranscriber(apiKey: elevenLabsKey);
   final speechInput = SpeechInputService(
@@ -180,6 +185,9 @@ void main() async {
     elevenLabsVoiceId: settingsBox.get('elevenlabs_voice_id') as String?,
     systemVoiceLocale: settingsBox.get('voice_tts_locale') as String?,
     selfHostedBaseUrl: settingsBox.get('tts_base_url') as String?,
+    selfHostedBackupUrl: settingsBox.get('tts_backup_url') as String?,
+    cfAccessClientId: cfAccessClientId,
+    cfAccessClientSecret: cfAccessClientSecret,
     selfHostedModel: settingsBox.get('tts_model') as String?,
     selfHostedVoice: settingsBox.get('tts_voice') as String?,
     selfHostedKey: ttsKey,

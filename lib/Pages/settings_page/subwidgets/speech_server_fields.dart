@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/network_discovery_service.dart';
+import 'package:horizon/Utils/remote_endpoint.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/speech_model_catalogue.dart';
 
@@ -20,6 +21,12 @@ class SpeechServerFields extends StatefulWidget {
   final String task;
 
   final String initialBaseUrl;
+
+  /// Address that works from outside the network — a Cloudflare tunnel
+  /// hostname. Optional, and empty for anyone who only ever uses the server
+  /// at home.
+  final String initialBackupUrl;
+
   final String initialModel;
 
   /// Only meaningful for text-to-speech.
@@ -27,6 +34,13 @@ class SpeechServerFields extends StatefulWidget {
   final bool showVoicePicker;
 
   final ValueChanged<String> onBaseUrlChanged;
+  final ValueChanged<String> onBackupUrlChanged;
+
+  /// Access service token, so the model picker can read a tunnel hostname.
+  /// Passed in rather than read here because it lives in secure storage and
+  /// the page that owns this widget has already loaded it.
+  final String cfAccessClientId;
+  final String cfAccessClientSecret;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String>? onVoiceChanged;
 
@@ -37,6 +51,10 @@ class SpeechServerFields extends StatefulWidget {
     required this.initialModel,
     required this.onBaseUrlChanged,
     required this.onModelChanged,
+    this.initialBackupUrl = '',
+    required this.onBackupUrlChanged,
+    this.cfAccessClientId = '',
+    this.cfAccessClientSecret = '',
     this.initialVoice = '',
     this.showVoicePicker = false,
     this.onVoiceChanged,
@@ -48,6 +66,7 @@ class SpeechServerFields extends StatefulWidget {
 
 class _SpeechServerFieldsState extends State<SpeechServerFields> {
   late final TextEditingController _address;
+  late final TextEditingController _backupAddress;
   late String _model;
   late String _voice;
 
@@ -61,6 +80,7 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
   void initState() {
     super.initState();
     _address = TextEditingController(text: widget.initialBaseUrl);
+    _backupAddress = TextEditingController(text: widget.initialBackupUrl);
     _model = widget.initialModel;
     _voice = widget.initialVoice;
     if (_address.text.trim().isNotEmpty) _loadModels();
@@ -69,6 +89,7 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
   @override
   void dispose() {
     _address.dispose();
+    _backupAddress.dispose();
     super.dispose();
   }
 
@@ -83,14 +104,29 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
   }
 
   Future<void> _loadModels() async {
-    final base = _address.text.trim();
-    if (base.isEmpty) return;
+    final lan = _address.text.trim();
+    final remote = _backupAddress.text.trim();
+    if (lan.isEmpty && remote.isEmpty) return;
     setState(() {
       _loading = true;
       _status = null;
     });
 
-    final models = await SpeechModelCatalogue.fetch(base);
+    // Try the LAN address, then the remote one. Configuring voice from
+    // outside the house is the normal case for the remote field — you add it
+    // precisely when you're somewhere the LAN address doesn't answer, so a
+    // picker that only ever reads the LAN address would come back empty.
+    final endpoint = RemoteEndpoint(
+      primary: lan,
+      backup: remote,
+      cfAccessClientId: widget.cfAccessClientId,
+      cfAccessClientSecret: widget.cfAccessClientSecret,
+    );
+    var models = const <SpeechServerModel>[];
+    for (final candidate in endpoint.candidates()) {
+      models = await SpeechModelCatalogue.fetch(candidate, endpoint: endpoint);
+      if (models.isNotEmpty) break;
+    }
     if (!mounted) return;
 
     setState(() {
@@ -100,7 +136,7 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
       if (relevant.isEmpty) {
         _status = models.isEmpty
             ? "Couldn't read a model list from that address."
-            : 'That server has no ${_taskLabel} model installed.';
+            : 'That server has no $_taskLabel model installed.';
       } else {
         _status = null;
         // Adopt the only sensible option rather than leaving the field
@@ -181,6 +217,27 @@ class _SpeechServerFieldsState extends State<SpeechServerFields> {
                   ),
           ),
           onChanged: widget.onBaseUrlChanged,
+          onSubmitted: (_) => _loadModels(),
+          onTapOutside: (_) {
+            FocusManager.instance.primaryFocus?.unfocus();
+            _loadModels();
+          },
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _backupAddress,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'Remote address (optional)',
+            hintText: 'https://speech.example.com',
+            helperText: 'Used when the address above is unreachable. A '
+                'Cloudflare tunnel hostname here carries the Access service '
+                'token from Settings → Server.',
+            helperMaxLines: 3,
+            border: OutlineInputBorder(),
+          ),
+          onChanged: widget.onBackupUrlChanged,
           onSubmitted: (_) => _loadModels(),
           onTapOutside: (_) {
             FocusManager.instance.primaryFocus?.unfocus();

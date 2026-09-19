@@ -81,33 +81,33 @@ void main() {
   group('WhisperTranscriber endpoint', () {
     test('appends the API path to a bare host and port', () {
       final w = WhisperTranscriber(baseUrl: 'http://172.16.23.20:8000');
-      expect(w.endpoint().toString(),
+      expect(WhisperTranscriber.transcriptionUrl(w.baseUrl).toString(),
           'http://172.16.23.20:8000/v1/audio/transcriptions');
     });
 
     test('assumes http when no scheme is given', () {
       final w = WhisperTranscriber(baseUrl: '172.16.23.20:8000');
-      expect(w.endpoint().scheme, 'http');
-      expect(w.endpoint().host, '172.16.23.20');
+      expect(WhisperTranscriber.transcriptionUrl(w.baseUrl).scheme, 'http');
+      expect(WhisperTranscriber.transcriptionUrl(w.baseUrl).host, '172.16.23.20');
     });
 
     test('tolerates a trailing slash', () {
       final w = WhisperTranscriber(baseUrl: 'http://whisper.test/');
       expect(
-          w.endpoint().toString(), 'http://whisper.test/v1/audio/transcriptions');
+          WhisperTranscriber.transcriptionUrl(w.baseUrl).toString(), 'http://whisper.test/v1/audio/transcriptions');
     });
 
     test('does not double up when the base already includes /v1', () {
       // These servers are usually documented with the /v1 included, so pasting
       // it verbatim must not produce /v1/v1/audio/transcriptions.
       final w = WhisperTranscriber(baseUrl: 'https://api.openai.com/v1');
-      expect(w.endpoint().toString(),
+      expect(WhisperTranscriber.transcriptionUrl(w.baseUrl).toString(),
           'https://api.openai.com/v1/audio/transcriptions');
     });
 
     test('keeps https when given', () {
       final w = WhisperTranscriber(baseUrl: 'https://api.groq.com/openai/v1');
-      expect(w.endpoint().toString(),
+      expect(WhisperTranscriber.transcriptionUrl(w.baseUrl).toString(),
           'https://api.groq.com/openai/v1/audio/transcriptions');
     });
   });

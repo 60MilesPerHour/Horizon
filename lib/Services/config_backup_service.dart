@@ -43,6 +43,12 @@ class ConfigBackupService {
     'web_search_backend',
     'searxng_url',
     'ha_base_url',
+    // Voice server addresses. A restore that brings back the chat server but
+    // not the speech one leaves voice quietly on the device recogniser.
+    'whisper_base_url',
+    'whisper_backup_url',
+    'tts_base_url',
+    'tts_backup_url',
   ];
 
   /// Read everything into a portable JSON string.

@@ -10,6 +10,8 @@ import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
 import 'package:horizon/Services/ollama_service.dart';
+import 'package:horizon/Services/voice/speech_synthesis_service.dart';
+import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:horizon/Widgets/ollama_bottom_sheet_header.dart';
 import 'package:provider/provider.dart';
@@ -572,6 +574,17 @@ class _CloudflareAccessFieldsState extends State<_CloudflareAccessFields> {
     await put('cf_access_client_secret', secret);
     service.cfAccessClientId = id;
     service.cfAccessClientSecret = secret;
+    // One tunnel, one token: the voice backends point at the same Access
+    // policy, and making them wait for a restart to notice a token the user
+    // just typed is the kind of gap that reads as "it didn't save".
+    for (final endpoint in [
+      context.read<WhisperTranscriber>().endpoint,
+      context.read<SpeechSynthesisService>().selfHosted,
+    ]) {
+      endpoint.cfAccessClientId = id;
+      endpoint.cfAccessClientSecret = secret;
+      endpoint.reset();
+    }
 
     if (!mounted) return;
     final String message;
