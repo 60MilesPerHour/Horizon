@@ -1,107 +1,102 @@
 <div align="center">
 
-<img src="assets/images/horizon.png" width="120" alt="Horizon logo">
+<img src="assets/images/horizon.png" width="112" alt="Horizon">
 
 # Horizon
 
-**A multi-provider AI chat client built on Flutter.**
-Talk to a local **Ollama** server and to every hosted model on **OpenRouter** — Claude, GPT, Gemini, Llama, Qwen and several hundred more — from a single app, with per-conversation configs, secure on-device key storage, and an OLED-optimized dark theme.
+**A calm AI app for the models you run and the ones you don't.**
+Local models on your own hardware, hundreds of hosted ones through OpenRouter, tools that search the web and run your home, and a voice you can simply talk to — in an app built around light, space and a little warmth.
 
-[**Download latest release ▸**](https://github.com/60MilesPerHour/Horizon/releases)
+[**Download the latest release ▸**](https://github.com/60MilesPerHour/Horizon/releases)
 
 </div>
 
+<p align="center">
+  <img src="docs/screenshots/home.png" width="30%" alt="Home">
+  &nbsp;
+  <img src="docs/screenshots/conversation.png" width="30%" alt="A conversation">
+  &nbsp;
+  <img src="docs/screenshots/voice.png" width="30%" alt="Horizon Voice">
+</p>
+
 ---
 
-## Highlights
+## What it does
 
-- **Local and hosted, one app.** Ollama (local + Ollama Cloud) for anything on your own hardware; OpenRouter for everything else, on one key and one bill. Mix them freely across chats — or even mid-chat. Horizon spoke to Anthropic, OpenAI and Google directly until v4.0.0; OpenRouter serves the same models behind one protocol and, unlike those endpoints, reports per-model capabilities, so the picker can show what each model actually supports instead of guessing from its name.
-- **Per-conversation everything.** Model, provider, system prompt, temperature, context size, max tokens — all stored per chat. No global toggles to babysit.
-- **Live model + provider switching.** Switch from a local Llama to Claude Sonnet mid-thread without losing history.
-- **Chat branching.** Fork a conversation at any message and explore a different path without losing the original.
-- **Home Assistant control.** Point Horizon at your HA instance and the model can read sensors and call services — "is the garage shut", "set the office to 20", "run the movie scene". Entity ids are looked up, never guessed.
-- **Cross-chat memory, per chat.** Share a conversation with the assistant and any other chat — including voice mode — can search it when it needs something you worked out there. Off by default, opt in per chat, and the model has to ask: nothing is injected into a prompt behind your back.
-- **A security page that reads your config, not a promise.** Settings → Security & Privacy lists every destination data can leave for, what exactly goes there, whether it's happening right now, and where each credential lives — grouped into on-device, your own hardware, and third parties. It's blunt about the awkward parts: that OpenRouter forwards your conversation to whoever serves the model, that Android's speech recogniser may ship your audio to Google, and that the config backup is plaintext by design.
-- **Appearance, properly.** Light/dark/system, any accent colour, five palette styles, true-black or dim dark mode, frosted translucent chrome, corner radius, text size and density — with a live preview.
-- **Self-hosted-friendly Ollama setup.** Configure a *primary* and a *backup* server URL. Requests fail over automatically when the primary is unreachable — keep your home-LAN address private and let traffic transparently route through your VPN/Tailscale endpoint when you're off-network.
-- **Ollama Cloud + bearer auth.** Optional Authorization token for Ollama Cloud (ollama.com) or any reverse-proxy that gates a self-hosted Ollama behind auth.
-- **Per-chat thinking toggle.** Three-state `think` control (Default / On / Off) for Ollama models with a thinking phase (Qwen 3, gpt-oss, etc.). Models without one ignore it.
-- **Secure key storage.** Cloud-provider API keys live in the OS keystore via `flutter_secure_storage` — never in plaintext settings or app data.
-- **Smooth streaming.** Typewriter buffer plus plain-text rendering during the stream means responses don't turn into a slideshow as they grow. Markdown renders cleanly once the response completes (code blocks, GFM tables, the works).
-- **OLED true-black dark theme.** Free AMOLED battery, pleasant at night — or Dim, if you're on an LCD.
-- **Image input** on every vision-capable model, with support read from OpenRouter per model rather than inferred.
-- **Edit & regenerate.** Edit any of your past messages and regenerate the assistant's response from there.
-- **Custom Ollama models.** Save your favourite prompt + config combo as a fresh Ollama model — Horizon calls `/api/create` for you.
-- **Responsive layout.** Same Flutter codebase tuned for phone, tablet, and desktop.
+**Talk to any model.** Ollama on your own machine (or Ollama Cloud) and every model on [OpenRouter](https://openrouter.ai) — Claude, GPT, Gemini, Llama, Qwen and hundreds more — side by side. Switch models mid-conversation without losing the thread. The picker shows what each model can actually do (vision, tools, thinking), read from the provider rather than guessed from a name.
+
+**Tools, when a question needs them.** The model can search the web (your own SearXNG, or SerpAPI), read the pages it finds, check the time, and cite its sources. Point Horizon at **Home Assistant** and it can read your sensors and control your home — "is the garage shut?", "dim the living room" — looking entity ids up rather than guessing them. Opt a chat in, and other conversations can search it when they need something you worked out there.
+
+**Horizon Voice.** A voice mode that works like a conversation, not a form:
+- words appear as you speak, transcribed live by a Whisper server you run;
+- it knows when you've finished — from what you're saying, not just how loud the room is — and keeps listening turn after turn;
+- a second, more accurate pass cleans up the transcript before it's sent;
+- replies are read aloud and shown like lyrics, the sentence being spoken lit in orange;
+- say **"Hey Horizon"** to start it hands-free — detected entirely on your phone, even with the app in the background. Or long-press power, if Horizon is your assistant.
+
+Any reply in any chat can be read aloud from its menu, too.
+
+**Every chat, its own way.** Model, system prompt, temperature, context size, thinking on or off — all per conversation. Branch a chat at any message to explore another path, edit and regenerate, attach photos and documents, and export or import conversations as Markdown.
+
+**Private by design.** Your conversations go only where you point them. Settings → Security & Privacy is generated from your actual configuration: every destination, what goes there, whether it's active right now, and where each credential lives — including the awkward parts, like OpenRouter passing your conversation to whoever serves the model. Keys live in the OS keystore, never in plain settings.
+
+**Built for self-hosting.** A primary and a backup address for every server you run, with automatic failover — your LAN address at home, a Tailscale or tunnel hostname away from it — plus bearer tokens and Cloudflare Access service tokens where you need them.
+
+**Yours to look at.** Light, dark or system; true black or dim; any accent colour and palette style; corner radius, text size, density; and a greeting by name.
 
 ## Install
 
 | Platform | Download | Notes |
 |---|---|---|
-| **Android** | `horizon-vX.Y.Z.apk` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Signed. Sideload via Files/adb. |
-| **macOS** | `horizon-macos.zip` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Unsigned. After unzip: `xattr -dr com.apple.quarantine /Applications/horizon.app` |
-| **Windows** | `horizon-windows.zip` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Extract and run `horizon.exe`. VC++ runtime DLLs are bundled. |
-| **Debian / Ubuntu / Mint / Pop** | `horizon_X.Y.Z_amd64.deb` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | `sudo apt install ./horizon_X.Y.Z_amd64.deb` |
-| **Other Linux** | `horizon-X.Y.Z-linux-x64.tar.gz` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Extract and run `./horizon` |
-| **iOS** | Not currently distributed | Buildable from source if you have an Apple Developer account. |
+| **Android** | `horizon-vX.Y.Z.apk` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Signed. Sideload from Files or with adb. |
+| **macOS** | `horizon-macos.zip` | Unsigned. After unzipping: `xattr -dr com.apple.quarantine /Applications/Horizon.app` |
+| **Windows** | `horizon-windows.zip` | Extract and run `horizon.exe`. |
+| **Debian / Ubuntu** | `horizon_X.Y.Z_amd64.deb` | `sudo apt install ./horizon_X.Y.Z_amd64.deb` |
+| **Other Linux** | `horizon-X.Y.Z-linux-x64.tar.gz` | Extract and run `./horizon`. |
+| **iOS** | Not distributed | Builds from source with an Apple developer account. |
 
-## Configure
+## Set up
 
-1. **Ollama** — Settings → Server → enter `http://<host>:11434`. Optionally enter a backup URL (Tailscale, VPN, etc.) — used automatically when the primary can't be reached. For **Ollama Cloud**, set the primary to `https://ollama.com` and paste your `olc-...` token in the API Token field below.
-2. **Cloud models** — Settings → Cloud Models → paste your OpenRouter key (`sk-or-v1-...`). It enables itself as soon as a key is present, and every model OpenRouter serves shows up in the picker with its price per million tokens.
-3. **Home Assistant** (optional) — Settings → Home Assistant → instance URL plus a long-lived access token from your HA profile → Security. "Test connection" tells you which of the two is wrong. The token is unscoped, because HA has no finer-grained scope for long-lived tokens: the model can do anything it can.
-4. **Per-chat thinking** (Ollama) — Configure Chat → Thinking → Default / On / Off. Leave at Default unless you need to force a thinking-capable model on or off.
+1. **A model.** Settings → Ollama Server → your server's address (`http://<host>:11434`), plus an optional backup address for when you're away from home. For Ollama Cloud, use `https://ollama.com` and your `olc-…` token. And/or Settings → Cloud Models → an OpenRouter key.
+2. **Tools** *(optional)*. Settings → Tools & Web Search → a SearXNG address or a SerpAPI key. Reading pages and checking the time work without either.
+3. **Home Assistant** *(optional)*. Settings → Home Assistant → your instance URL and a long-lived access token. "Test connection" tells you which one is wrong.
+4. **Voice** *(optional)*. Settings → Voice. For live transcription, run a WhisperLive server and enter its address under Live; add a Whisper-compatible server (such as Speaches) under Accuracy pass. Choose how replies are spoken — the device's own voice, a self-hosted one, or ElevenLabs — and turn on "Hey Horizon" if you want it.
 
-That's it.
+### Running the voice servers
 
-## Compared to upstream Reins
+Live transcription is [WhisperLive](https://github.com/collabora/WhisperLive) on a GPU:
 
-Horizon is a fork of [Reins](https://github.com/ibrahimcetin/reins) — a clean Flutter Ollama client by [Ibrahim Çetin](https://github.com/ibrahimcetin). Upstream's last public release was 1.2.0 and the repo has been quiet since; this fork started as a personal stability patch and grew into a multi-provider client. Major changes:
+```bash
+docker run -d --gpus all -p 9090:9090 ghcr.io/collabora/whisperlive-gpu:latest \
+  python run_server.py --port 9090 --backend faster_whisper \
+  -fw deepdml/faster-whisper-large-v3-turbo-ct2
+```
 
-| Area | Reins (1.2.0) | Horizon (3.3.0) |
-|---|---|---|
-| Backends | Ollama only | Ollama (local + Cloud) + OpenRouter (Claude, GPT, Gemini, Llama, Qwen, …) |
-| Server reachability | Single URL | Primary + backup URL with automatic failover |
-| Authenticated Ollama | n/a | Optional bearer token for Ollama Cloud / proxied servers |
-| Per-chat `think` toggle | n/a | Three-state Default/On/Off |
-| Network reliability | A few hang/leak edges | 30 s timeouts everywhere, stream-subscription cleanup, JSON parse guards, tagged provider errors |
-| Streaming feel | Per-token rebuilds (jittery on bursty SSE) | Typewriter buffer + plain-text live render → Markdown on completion |
-| `num_ctx` behaviour | Always sent, always 2048 default → forced Ollama to reload models | Defaults to "let the server decide"; opt-in override per chat |
-| Multi-provider routing | n/a | `ChatService` abstraction, per-chat `provider` column, self-healing on read |
-| Key storage | n/a | OS keystore via `flutter_secure_storage` |
-| Theme | Material default | OLED true-black dark + dynamic colour |
-| Platform builds | Manual | GitHub Actions: Android (signed APK), macOS, Windows, Linux (.deb + tar.gz) on every push |
-| Distribution | APK only (1.2.0) | Android APK + macOS app + Windows exe + Linux .deb / tar.gz per release |
-
-Anything that was good in Reins — the responsive layout, the chat-configure sheet, the model-selection bottom sheet, the inline Markdown rendering — is still good in Horizon. The diff is purely additive.
+`-fw` loads one model and shares it, so a new conversation connects instantly instead of loading a model each time. For the accuracy pass and self-hosted speech, [Speaches](https://github.com/speaches-ai/speaches) serves both Whisper and Kokoro behind the OpenAI-compatible API.
 
 ## Build from source
-
-Local Flutter dev works for Android/macOS/Linux. iOS and Windows generally route through CI.
 
 ```bash
 git clone https://github.com/60MilesPerHour/Horizon.git
 cd Horizon
 flutter pub get
-flutter run                  # uses current device
-flutter build apk --release  # Android
-flutter build macos --release
-flutter build windows --release
+flutter run                   # the connected device
+flutter build apk --release   # Android
 ```
 
-Dart SDK ≥ 3.5.4 required. Flutter 3.27.x recommended (this is what CI pins).
+Needs Flutter 3.44 (what CI builds with) and Dart 3.12. CI builds Android, iOS, macOS, Windows and Linux on every push to `main`; releases are cut from `v*` tags.
 
 ## Contributing
 
-Issues and PRs welcome. Quick rules of the road:
-- Keep changes per-platform-buildable. CI builds Android + macOS + Windows on every push to `main` and on PRs.
-- Don't break per-chat isolation — anything that touches the request path should respect `chat.provider`.
+Issues and pull requests are welcome. A few things worth knowing:
+- Keep every platform building — CI checks all five.
+- Anything on the request path should respect the chat's own provider and settings.
 - New providers go in `lib/Services/<name>_service.dart` and register through `ChatServiceRegistry`.
 
-## Credit
+## Origins
 
-Built on top of [Reins](https://github.com/ibrahimcetin/reins) by [Ibrahim Çetin](https://github.com/ibrahimcetin). Thank you for shipping a clean, hackable Flutter Ollama base — every multi-provider, networking, and polish change in Horizon stands on top of your work.
+Horizon was born out of Reins, İbrahim Çetin's Flutter client for Ollama, and grew from there into its own app. [ORIGINS.md](ORIGINS.md) tells the story, and says thank you.
 
 ## License
 
-[GPL-3.0](LICENSE), inherited from Reins. Modifications and additions © Miles Oldenburger 2026.
+[GPL-3.0](LICENSE). Portions derived from Reins, © 2024–2026 İbrahim Çetin, also under GPL-3.0. Modifications and additions © 2026 Miles Oldenburger.
