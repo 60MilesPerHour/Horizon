@@ -27,19 +27,23 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       // only blurs what's already been painted under it, and the bar's
       // background is transparent under the frosted style (see HorizonTheme).
       flexibleSpace: const FrostedSurface(),
-      // The wordmark on the home screen; in a conversation, the conversation's
-      // name, quietly. The model lives in the composer now.
-      title: inConversation
-          ? Text(
+      // The wordmark always; in a conversation, the conversation's name sits
+      // quietly beneath it. The model lives in the composer now.
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(AppConstants.appName, style: GoogleFonts.pacifico(fontSize: inConversation ? 20 : 22)),
+          if (inConversation)
+            Text(
               chat.title,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(
+              style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w400,
                 letterSpacing: .2,
               ),
-            )
-          : Text(AppConstants.appName, style: GoogleFonts.pacifico(fontSize: 22)),
+            ),
+        ],
+      ),
       actions: [
         // Show Ollama health only when the current chat actually uses it —
         // otherwise the dot is noise for cloud-only users.

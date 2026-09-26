@@ -32,6 +32,22 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.4.1 — 2026-09-26
+
+**The title font stays the title font.** Pacifico — the "Horizon" wordmark,
+the Settings title — was downloaded from Google Fonts the first time it was
+needed, so on a fresh install, offline, or with Google blocked, it silently
+fell back to plain text. It's bundled with the app now, along with Source Code
+Pro for code blocks, and neither is fetched at runtime — which also removes a
+request to Google that Horizon had no business making. Their licences are on
+the app's licences page.
+
+- The wordmark stays at the top of a conversation, with the chat's name
+  beneath it, instead of being replaced by the name in plain text.
+- "Horizon Voice" is set in the title font too.
+
+---
+
 ## v4.4.0 — 2026-09-26
 
 **Horizon Voice, rebuilt — and an app that finally looks like its own.**

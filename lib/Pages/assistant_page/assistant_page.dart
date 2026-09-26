@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
@@ -780,11 +781,7 @@ class _VoiceTitle extends StatelessWidget {
       children: [
         Text(
           'Horizon Voice',
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: ink.ink,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.2,
-          ),
+          style: GoogleFonts.pacifico(fontSize: 20, color: ink.ink),
         ),
         InkWell(
           onTap: onChangeModel,

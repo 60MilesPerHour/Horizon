@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -38,6 +39,17 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqlite3/open.dart' as sqlite3_open;
 
 void main() async {
+  // The bundled fonts' licences, shown on the app's licences page as the OFL
+  // asks of anything that ships the fonts.
+  LicenseRegistry.addLicense(() async* {
+    for (final (font, file) in const [
+      ('Pacifico', 'assets/google_fonts/Pacifico-OFL.txt'),
+      ('Source Code Pro', 'assets/google_fonts/SourceCodePro-OFL.txt'),
+    ]) {
+      yield LicenseEntryWithLineBreaks([font], await rootBundle.loadString(file));
+    }
+  });
+
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows || Platform.isLinux) {
