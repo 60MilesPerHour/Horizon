@@ -12,6 +12,7 @@ import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 import 'package:horizon/Services/voice/voice_session_controller.dart';
 import 'package:horizon/Services/voice/wake/wake_word_listener.dart';
+import 'package:horizon/Widgets/horizon_brand.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
 /// Full-screen hands-free voice mode.
@@ -133,6 +134,19 @@ class _AssistantPageState extends State<AssistantPage> {
       'the question was unclear or sounds misheard, ask one short question '
       'back instead of guessing.';
 
+  /// A later default that was rolled back. A chat that picked it up is put
+  /// back on [_voiceSystemPrompt]; anything the user wrote is left alone.
+  static const String _rolledBackVoiceSystemPrompt =
+      "You are Horizon, a voice assistant. Everything you write is read aloud, "
+      'so talk the way a person does in conversation and lead with the answer. '
+      'Keep quick answers short — a sentence or three. But there is no length '
+      'limit: when the user asks for something long — a story, a detailed '
+      'explanation, step-by-step instructions — give them all of it; they can '
+      'interrupt you whenever they like. No markdown, lists, headings, code '
+      'blocks, emoji or URLs. Spell out numbers and symbols the way they are '
+      'said. If the question was unclear or sounds misheard, ask one short '
+      'question back instead of guessing.';
+
   /// Voice defaults for the assistant chat, applied only where the chat has
   /// no setting of its own — a prompt or think choice made on purpose in the
   /// chat view is left alone.
@@ -141,7 +155,8 @@ class _AssistantPageState extends State<AssistantPage> {
   /// few hundred tokens where nothing can be spoken, and in voice mode that
   /// reads as the assistant having frozen.
   Future<void> _applyVoiceDefaults(ChatProvider provider, OllamaChat chat) async {
-    final needsPrompt = (chat.systemPrompt ?? '').trim().isEmpty;
+    final current = (chat.systemPrompt ?? '').trim();
+    final needsPrompt = current.isEmpty || current == _rolledBackVoiceSystemPrompt;
     final needsThink = chat.options.think == null;
     // The chat was called "Assistant" before the rename; only that exact
     // default is changed, never a title the user chose.
@@ -399,9 +414,13 @@ class _AssistantPageState extends State<AssistantPage> {
             SizedBox(
               height: 132,
               child: Center(
-                child: _VoiceOrb(
-                  phase: controller.phase,
-                  levels: controller.orbLevels,
+                child: VoiceOrb(
+                  size: 72,
+                  // Swells with your voice while listening; breathes otherwise.
+                  levels: controller.phase == VoicePhase.listening ? controller.levels : null,
+                  active: controller.phase == VoicePhase.listening ||
+                      controller.phase == VoicePhase.speaking ||
+                      controller.phase == VoicePhase.thinking,
                   onTap: controller.toggle,
                 ),
               ),
@@ -486,7 +505,15 @@ class _AssistantPageState extends State<AssistantPage> {
     return Text.rich(TextSpan(style: style, children: [
       if (start > 0)
         TextSpan(text: reply.substring(0, start), style: style.copyWith(color: ink.past)),
-      TextSpan(text: reply.substring(start, end)),
+      TextSpan(
+        text: reply.substring(start, end),
+        style: style.copyWith(
+          color: HorizonBrand.accent(context),
+          shadows: theme.brightness == Brightness.dark
+              ? [Shadow(color: HorizonBrand.orange.withValues(alpha: .35), blurRadius: 20)]
+              : null,
+        ),
+      ),
       if (end < reply.length)
         TextSpan(
           text: reply.substring(end),
@@ -502,7 +529,7 @@ class _AssistantPageState extends State<AssistantPage> {
         child: Text(
           fromUser ? 'YOU' : 'HORIZON',
           style: theme.textTheme.labelSmall?.copyWith(
-            color: ink.chrome,
+            color: fromUser ? ink.chrome : HorizonBrand.accent(context),
             letterSpacing: 1.4,
             fontWeight: FontWeight.w700,
           ),
@@ -556,7 +583,11 @@ class _AssistantPageState extends State<AssistantPage> {
     return SingleChildScrollView(
       reverse: true,
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
-      child: Column(
+      // Full width, so the lines sit on the left like lyrics; a shrink-wrapped
+      // column let short lines drift to the middle.
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (final line in controller.history) _pastLine(theme, ink, line),
@@ -581,6 +612,7 @@ class _AssistantPageState extends State<AssistantPage> {
             // one thing the chat view already learned not to do.
             _replyText(theme, controller),
         ],
+      ),
       ),
     );
   }
@@ -639,160 +671,13 @@ class _AssistantPageState extends State<AssistantPage> {
     };
 
     return Text(
-      label,
+      label.toUpperCase(),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.bodyMedium?.copyWith(
-        color: _VoiceInk.of(theme.brightness).chrome,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-  }
-}
-
-/// The single control: an orb that reacts in place rather than moving.
-///
-/// One widget for all phases, at a constant footprint, because the previous
-/// version changed size and sat under content whose height changed with the
-/// phase — so it visibly drifted under your thumb between turns. Everything
-/// here animates scale and colour inside a fixed box.
-class _VoiceOrb extends StatefulWidget {
-  final VoicePhase phase;
-
-  /// Microphone level, when the active backend has no partial words to show.
-  final Stream<double>? levels;
-
-  final VoidCallback onTap;
-
-  const _VoiceOrb({
-    required this.phase,
-    required this.onTap,
-    this.levels,
-  });
-
-  @override
-  State<_VoiceOrb> createState() => _VoiceOrbState();
-}
-
-class _VoiceOrbState extends State<_VoiceOrb>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
-  StreamSubscription<double>? _levelSub;
-  double _level = 0;
-
-  static const double _size = 104;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _syncPulse();
-    _subscribeLevels();
-  }
-
-  @override
-  void didUpdateWidget(covariant _VoiceOrb oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.phase != widget.phase) _syncPulse();
-    if (oldWidget.levels != widget.levels) _subscribeLevels();
-  }
-
-  void _subscribeLevels() {
-    _levelSub?.cancel();
-    _levelSub = widget.levels?.listen((value) {
-      if (mounted) setState(() => _level = value.clamp(0.0, 1.0));
-    });
-  }
-
-  /// Thinking and speaking pulse continuously; listening and idle don't, so
-  /// motion means "working" rather than being constant decoration.
-  void _syncPulse() {
-    final shouldPulse = widget.phase == VoicePhase.thinking ||
-        widget.phase == VoicePhase.speaking;
-    if (shouldPulse && !_pulse.isAnimating) {
-      _pulse.repeat(reverse: true);
-    } else if (!shouldPulse && _pulse.isAnimating) {
-      _pulse.stop();
-      _pulse.value = 0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _levelSub?.cancel();
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // White on the backdrop in every phase: the backdrop's colour already
-    // says which phase this is, and a second colour on the orb competed
-    // with it.
-    final IconData icon = switch (widget.phase) {
-      VoicePhase.listening => Icons.mic,
-      VoicePhase.thinking => Icons.auto_awesome,
-      VoicePhase.speaking => Icons.graphic_eq,
-      VoicePhase.error => Icons.refresh,
-      VoicePhase.idle => Icons.mic_none,
-    };
-    final ink = _VoiceInk.of(Theme.of(context).brightness);
-    final colour = widget.phase == VoicePhase.idle
-        ? ink.orb.withValues(alpha: 0.85)
-        : ink.orb;
-    final foreground = ink.orbIcon;
-
-    return Semantics(
-      button: true,
-      label: switch (widget.phase) {
-        VoicePhase.listening => 'Stop listening',
-        VoicePhase.thinking || VoicePhase.speaking => 'Interrupt',
-        _ => 'Start listening',
-      },
-      child: GestureDetector(
-        onTap: widget.onTap,
-        // The fixed box is what keeps the orb still: the halo grows into the
-        // padding instead of pushing anything around.
-        child: SizedBox(
-          width: _size + 28,
-          height: _size + 28,
-          child: AnimatedBuilder(
-            animation: _pulse,
-            builder: (context, _) {
-              // While listening, the halo follows the microphone. While
-              // thinking or speaking it breathes on the animation clock.
-              final energy = widget.phase == VoicePhase.listening
-                  ? _level
-                  : (_pulse.isAnimating ? _pulse.value : 0.0);
-
-              return Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: _size + 8 + energy * 20,
-                    height: _size + 8 + energy * 20,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: ink.orb.withValues(alpha: 0.14 + energy * 0.26),
-                    ),
-                  ),
-                  Container(
-                    width: _size,
-                    height: _size,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: colour,
-                    ),
-                    child: Icon(icon, size: 42, color: foreground),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: HorizonBrand.accent(context),
+        letterSpacing: 1.6,
+        fontWeight: FontWeight.w500,
       ),
     );
   }
@@ -812,34 +697,12 @@ class _VoiceOrbState extends State<_VoiceOrb>
 class _VoiceBackdrop {
   const _VoiceBackdrop._();
 
+  /// The redesign puts voice on black (warm paper in light mode): the room
+  /// goes dark and the words and the orb are the only light. The phase is
+  /// carried by the orb and the status line, not the background.
   static LinearGradient forPhase(VoicePhase phase, Brightness brightness) {
-    final colors = brightness == Brightness.dark
-        ? switch (phase) {
-            // Night over the water.
-            VoicePhase.idle => const [Color(0xFF1E0A14), Color(0xFF0A1422), Color(0xFF010817)],
-            // The dark icon itself: dusk sky, low sun, sea.
-            VoicePhase.listening => const [Color(0xFF862231), Color(0xFF944F24), Color(0xFF074163)],
-            // Last light going violet.
-            VoicePhase.thinking => const [Color(0xFF5C1F3C), Color(0xFF2E2A5A), Color(0xFF010817)],
-            // The sun on the water.
-            VoicePhase.speaking => const [Color(0xFF955926), Color(0xFF862231), Color(0xFF084265)],
-            VoicePhase.error => const [Color(0xFF6B1522), Color(0xFF2A0A12), Color(0xFF010817)],
-          }
-        : switch (phase) {
-            // Dawn haze.
-            VoicePhase.idle => const [Color(0xFFFFE6DC), Color(0xFFFFF1E6), Color(0xFFE2F0FA)],
-            // The daytime icon, lifted: coral sky, sun, shallow sea.
-            VoicePhase.listening => const [Color(0xFFFF9AA6), Color(0xFFFFC08A), Color(0xFF8FC9EE)],
-            VoicePhase.thinking => const [Color(0xFFF6B9D0), Color(0xFFCDBDF2), Color(0xFFB7D9F5)],
-            VoicePhase.speaking => const [Color(0xFFFFD08A), Color(0xFFFFA27E), Color(0xFF9FD1F2)],
-            VoicePhase.error => const [Color(0xFFFFB0B4), Color(0xFFFFD9DA), Color(0xFFF6E8E8)],
-          };
-    return LinearGradient(
-      begin: const Alignment(-0.4, -1.0),
-      end: const Alignment(0.4, 1.0),
-      colors: colors,
-      stops: const [0.0, 0.55, 1.0],
-    );
+    final c = brightness == Brightness.dark ? const Color(0xFF000000) : HorizonBrand.paper;
+    return LinearGradient(colors: [c, c]);
   }
 }
 
@@ -873,23 +736,23 @@ class _VoiceInk {
   final Color orb;
   final Color orbIcon;
 
-  static const _navy = Color(0xFF0B1A2E);
+  static const _ink = Color(0xFF1D1B1A);
 
   static const dark = _VoiceInk(
     ink: Colors.white,
     past: Color(0x8CFFFFFF),
-    upcoming: Color(0x73000000),
-    chrome: Color(0xCCFFFFFF),
-    orb: Colors.white,
-    orbIcon: Color(0xFF1A0E14),
+    upcoming: Color(0x33FFFFFF),
+    chrome: Color(0x99FFFFFF),
+    orb: HorizonBrand.orange,
+    orbIcon: Colors.white,
   );
 
   static const light = _VoiceInk(
-    ink: _navy,
-    past: Color(0x8C0B1A2E),
-    upcoming: Color(0xB3FFFFFF),
-    chrome: Color(0xB30B1A2E),
-    orb: _navy,
+    ink: _ink,
+    past: Color(0x801D1B1A),
+    upcoming: Color(0x331D1B1A),
+    chrome: Color(0x991D1B1A),
+    orb: HorizonBrand.orangeInk,
     orbIcon: Colors.white,
   );
 

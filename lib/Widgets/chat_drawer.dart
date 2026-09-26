@@ -85,12 +85,11 @@ class ChatNavigationDrawer extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
+            // "New chat", not "Ollama": Horizon talks to more than one
+            // provider now, and this row starts a conversation, not a server.
             const NavigationDrawerDestination(
-              icon: CircleAvatar(
-                backgroundImage: AssetImage(AppConstants.ollamaIconPng),
-                radius: 16,
-              ),
-              label: Text("Ollama"),
+              icon: Icon(Icons.edit_square),
+              label: Text('New chat'),
             ),
             const Padding(
               padding: EdgeInsets.fromLTRB(28, 16, 28, 10),

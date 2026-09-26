@@ -31,7 +31,7 @@ class ChatConfigureBottomSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            OllamaBottomSheetHeader(title: 'Configure The Chat'),
+            OllamaBottomSheetHeader(title: 'Chat settings'),
             Divider(),
             Expanded(
               child: _ChatConfigureBottomSheetContent(arguments: arguments),
@@ -325,7 +325,7 @@ class _RenameButton extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Rename Chat'),
+          title: const Text('Rename chat'),
           content: TextFormField(
               initialValue: currentTitle,
               decoration: const InputDecoration(
@@ -452,7 +452,7 @@ class _DeleteButton extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete Chat?'),
+          title: const Text('Delete this chat?'),
           content: const Text(
             'This action can\'t be undone.',
           ),

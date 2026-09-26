@@ -121,7 +121,7 @@ void main() {
                       'tool_calls': [
                         {
                           'index': 0,
-                          'function': {'arguments': 'ery":"reins 2.3"}'},
+                          'function': {'arguments': 'ery":"nimbus 2.3"}'},
                         }
                       ]
                     }
@@ -139,7 +139,7 @@ void main() {
       expect(calls!.length, 1);
       expect(calls.first.id, 'call_abc');
       expect(calls.first.name, 'web_search');
-      expect(calls.first.arguments, {'query': 'reins 2.3'});
+      expect(calls.first.arguments, {'query': 'nimbus 2.3'});
     });
 
     test('keeps parallel calls separate and ordered by index', () async {

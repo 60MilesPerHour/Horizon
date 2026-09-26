@@ -8,3 +8,5 @@ export 'chat_error.dart';
 export 'chat_attachment/chat_attachment_row.dart';
 export 'chat_attachment/chat_attachment_image.dart';
 export 'chat_attachment/chat_attachment_preset.dart';
+export 'horizon_home.dart';
+export 'horizon_composer.dart';

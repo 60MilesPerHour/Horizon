@@ -5,18 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "reins",
+            "name": "horizon",
             "request": "launch",
             "type": "dart"
         },
         {
-            "name": "reins (profile mode)",
+            "name": "horizon (profile mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
-            "name": "reins (release mode)",
+            "name": "horizon (release mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"

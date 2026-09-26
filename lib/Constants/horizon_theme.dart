@@ -47,6 +47,19 @@ class HorizonTheme {
       );
     }
 
+    if (!isDark) {
+      // Warm paper rather than clinical white — the redesign's light theme.
+      // Containers step down from it in the same warm hue.
+      scheme = scheme.copyWith(
+        surface: const Color(0xFFFAF8F5),
+        surfaceContainerLowest: const Color(0xFFFFFFFF),
+        surfaceContainerLow: const Color(0xFFF6F3EF),
+        surfaceContainer: const Color(0xFFF1EDE8),
+        surfaceContainerHigh: const Color(0xFFEBE6E0),
+        surfaceContainerHighest: const Color(0xFFE4DED7),
+      );
+    }
+
     final radius = BorderRadius.circular(appearance.cornerRadius);
     final shape = RoundedRectangleBorder(borderRadius: radius);
 
@@ -55,7 +68,9 @@ class HorizonTheme {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
-      scaffoldBackgroundColor: trueBlack ? const Color(0xFF000000) : null,
+      scaffoldBackgroundColor: trueBlack
+          ? const Color(0xFF000000)
+          : (isDark ? null : const Color(0xFFFAF8F5)),
       visualDensity: appearance.compact ? VisualDensity.compact : VisualDensity.standard,
       appBarTheme: AppBarTheme(
         centerTitle: true,
@@ -64,6 +79,15 @@ class HorizonTheme {
         backgroundColor: appearance.isFrosted ? Colors.transparent : null,
         surfaceTintColor: appearance.isFrosted ? Colors.transparent : null,
         scrolledUnderElevation: appearance.isFrosted ? 0 : null,
+      ),
+      // A quiet selection: a soft step of the surface, not a filled pill in
+      // the accent — the drawer should recede, not shout.
+      navigationDrawerTheme: NavigationDrawerThemeData(
+        indicatorColor: scheme.surfaceContainerHighest,
+        labelTextStyle: WidgetStatePropertyAll(
+          TextStyle(color: scheme.onSurface, fontSize: 14, fontWeight: FontWeight.w400),
+        ),
+        iconTheme: WidgetStatePropertyAll(IconThemeData(color: scheme.onSurfaceVariant, size: 22)),
       ),
       drawerTheme: DrawerThemeData(
         backgroundColor: chromeColor,

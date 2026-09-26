@@ -8,7 +8,6 @@ import 'package:horizon/Constants/constants.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Widgets/chat_configure_bottom_sheet.dart';
 import 'package:horizon/Widgets/frosted_surface.dart';
-import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 import 'package:horizon/Widgets/ollama_health_indicator.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -19,48 +18,41 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final chatProvider = Provider.of<ChatProvider>(context);
+    final chat = chatProvider.currentChat;
+    final inConversation = chat != null && chatProvider.messages.isNotEmpty;
+    final theme = Theme.of(context);
 
     return AppBar(
       // Paints the blur *behind* the bar's own contents; a BackdropFilter
       // only blurs what's already been painted under it, and the bar's
       // background is transparent under the frosted style (see HorizonTheme).
       flexibleSpace: const FrostedSurface(),
-      title: Column(
-        children: [
-          Text(AppConstants.appName, style: GoogleFonts.pacifico()),
-          if (chatProvider.currentChat != null)
-            InkWell(
-              onTap: () {
-                _handleModelSelectionButton(context);
-              },
-              customBorder: StadiumBorder(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: Text(
-                  chatProvider.currentChat!.model,
-                  style: GoogleFonts.kodeMono(
-                    textStyle: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ),
+      // The wordmark on the home screen; in a conversation, the conversation's
+      // name, quietly. The model lives in the composer now.
+      title: inConversation
+          ? Text(
+              chat.title,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w400,
+                letterSpacing: .2,
               ),
-            ),
-        ],
-      ),
+            )
+          : Text(AppConstants.appName, style: GoogleFonts.pacifico(fontSize: 22)),
       actions: [
         // Show Ollama health only when the current chat actually uses it —
         // otherwise the dot is noise for cloud-only users.
-        if (chatProvider.currentChat?.provider == 'ollama' || chatProvider.currentChat == null)
-          const OllamaHealthIndicator(),
+        if (chat?.provider == 'ollama' || chat == null) const OllamaHealthIndicator(),
         // A branch is otherwise indistinguishable from a duplicate in the
         // sidebar, so give it a visible way back to what it came from.
-        if (chatProvider.currentChat?.isBranch == true)
+        if (chat?.isBranch == true)
           IconButton(
             icon: const Icon(Icons.call_split),
             tooltip: 'Go to the chat this was branched from',
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);
-              final opened =
-                  await chatProvider.openParentOf(chatProvider.currentChat!);
+              final opened = await chatProvider.openParentOf(chat!);
               if (!opened) {
                 messenger.showSnackBar(const SnackBar(
                   content: Text('The original chat has been deleted.'),
@@ -68,37 +60,29 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
               }
             },
           ),
-        IconButton(
-          icon: const Icon(Icons.file_upload_outlined),
-          tooltip: 'Import chat from file',
-          onPressed: () => _handleImport(context),
-        ),
-        IconButton(
-          icon: const Icon(Icons.tune),
-          onPressed: () {
-            _handleConfigureButton(context);
-          },
+        MenuAnchor(
+          menuChildren: [
+            if (chat != null)
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.tune),
+                onPressed: () => _handleConfigureButton(context),
+                child: const Text('Chat settings'),
+              ),
+            MenuItemButton(
+              leadingIcon: const Icon(Icons.file_upload_outlined),
+              onPressed: () => _handleImport(context),
+              child: const Text('Import a chat'),
+            ),
+          ],
+          builder: (context, controller, _) => IconButton(
+            icon: const Icon(Icons.more_horiz),
+            tooltip: 'More',
+            onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+          ),
         ),
       ],
       forceMaterialTransparency: !ResponsiveBreakpoints.of(context).isMobile,
     );
-  }
-
-  Future<void> _handleModelSelectionButton(BuildContext context) async {
-    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-
-    final selectedModel = await showModelSelectionBottomSheet(
-      context: context,
-      title: "Change The Model",
-      currentModelName: chatProvider.currentChat?.model,
-    );
-
-    if (selectedModel != null) {
-      await chatProvider.updateCurrentChat(
-        newModel: selectedModel.name,
-        newProvider: selectedModel.provider,
-      );
-    }
   }
 
   Future<void> _handleConfigureButton(BuildContext context) async {

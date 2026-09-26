@@ -145,7 +145,7 @@ END;''');
     final call = ToolCall(
       id: 'call_1',
       name: 'web_search',
-      arguments: const {'query': 'reins 2.3'},
+      arguments: const {'query': 'nimbus 2.3'},
     );
 
     // On a v2 table this insert fails the CHECK constraint outright, so this
@@ -157,7 +157,7 @@ END;''');
     await service.addMessage(
       OllamaMessage.toolResult(
         call: call,
-        result: const ToolResult('[1] Reins 2.3.0 — on-device models'),
+        result: const ToolResult('[1] Nimbus 2.3.0 — on-device models'),
       ),
       chat: chat,
     );
@@ -167,7 +167,7 @@ END;''');
 
     final assistant = messages[2];
     expect(assistant.hasToolCalls, isTrue);
-    expect(assistant.toolCalls!.single.arguments, {'query': 'reins 2.3'});
+    expect(assistant.toolCalls!.single.arguments, {'query': 'nimbus 2.3'});
 
     final toolResult = messages[3];
     expect(toolResult.role, OllamaMessageRole.tool);

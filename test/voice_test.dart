@@ -20,10 +20,10 @@ void main() {
     });
 
     test('splits once a long enough sentence is complete', () {
-      const text = 'Reins shipped version 2.3 today. It adds on-device models';
+      const text = 'Nimbus shipped version 2.3 today. It adds on-device models';
       final end = boundary(text);
       expect(text.substring(0, end).trim(),
-          'Reins shipped version 2.3 today.');
+          'Nimbus shipped version 2.3 today.');
     });
 
     test('does not split on a decimal point mid-number', () {
@@ -78,7 +78,7 @@ void main() {
 
     test('keeps a link label and does not spell out the URL', () {
       final spoken = SpeechSynthesisService.cleanForSpeech(
-        'See [the release notes](https://github.com/ibrahimcetin/reins) first.',
+        'See [the release notes](https://example.com/nimbus) first.',
       );
       expect(spoken, 'See the release notes first.');
     });
@@ -99,11 +99,11 @@ void main() {
 
     test('strips headings, bullets and citation markers', () {
       final spoken = SpeechSynthesisService.cleanForSpeech(
-        '## Summary\n- Reins is now paid [1]\n- The repo is frozen [2]',
+        '## Summary\n- Nimbus is now paid [1]\n- The repo is frozen [2]',
       );
       expect(spoken, isNot(contains('#')));
       expect(spoken, isNot(contains('[1]')));
-      expect(spoken, contains('Reins is now paid'));
+      expect(spoken, contains('Nimbus is now paid'));
       expect(spoken, contains('The repo is frozen'));
     });
 

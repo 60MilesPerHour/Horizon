@@ -6,6 +6,7 @@ import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Services/appearance_controller.dart';
 import 'package:provider/provider.dart';
+import 'package:horizon/Widgets/horizon_brand.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'chat_bubble_actions.dart';
@@ -109,6 +110,11 @@ class _ChatBubbleState extends State<ChatBubble>
           child: const Text('Select Text'),
         ),
         MenuItemButton(
+          onPressed: () => actions.handleReadAloud(context),
+          leadingIcon: Icon(Icons.volume_up_outlined),
+          child: const Text('Read aloud'),
+        ),
+        MenuItemButton(
           onPressed: () => actions.handleRegenerate(context),
           leadingIcon: Icon(Icons.refresh_outlined),
           child: const Text('Regenerate'),
@@ -193,11 +199,14 @@ class _ChatBubbleBody extends StatelessWidget {
                   ? MediaQuery.of(context).size.width * 0.8
                   : double.infinity,
             ),
+            // Your messages carry the faint sunset warmth, over the page's own
+            // surface; the reply stays on the page itself, unboxed.
             decoration: BoxDecoration(
               color: isSentFromUser && bubbled
-                  ? Theme.of(context).colorScheme.primaryContainer
+                  ? Theme.of(context).colorScheme.surfaceContainerLow
                   : Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(appearance.cornerRadius),
+              gradient: isSentFromUser && bubbled ? HorizonBrand.userTint(context) : null,
+              borderRadius: BorderRadius.circular(16),
             ),
             child: streamingContent != null
                 ? _StreamingText(notifier: streamingContent!)
@@ -212,8 +221,16 @@ class _ChatBubbleBody extends StatelessWidget {
                     // doesn't need to be selectable.
                     selectable: false,
                     softLineBreak: true,
+                    // Replies read like a page: lighter weight, more line
+                    // height. Your own lines stay at normal weight.
                     styleSheet: context.markdownStyleSheet.copyWith(
                       code: _markdownCodeStyle,
+                      p: isSentFromUser
+                          ? null
+                          : Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w300,
+                                height: 1.65,
+                              ),
                     ),
                     builders: _markdownBuilders,
                     extensionSet: _markdownExtensionSet,
@@ -222,9 +239,9 @@ class _ChatBubbleBody extends StatelessWidget {
           ),
           Text(
             TimeOfDay.fromDateTime(message.createdAt.toLocal()).format(context),
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .6),
+                ),
           ),
         ],
       ),
@@ -279,7 +296,10 @@ class _StreamingText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseStyle = Theme.of(context).textTheme.bodyMedium;
+    final baseStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+          fontWeight: FontWeight.w300,
+          height: 1.65,
+        );
     return ValueListenableBuilder<String>(
       valueListenable: notifier,
       builder: (context, content, _) => Text(

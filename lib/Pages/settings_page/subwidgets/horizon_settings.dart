@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'package:horizon/Constants/app_constants.dart';
+import 'package:horizon/Pages/settings_page/origins_page.dart';
 import 'package:horizon/Widgets/flexible_text.dart';
 
 /// About page.
@@ -20,7 +21,6 @@ class HorizonSettings extends StatelessWidget {
   static const String _repoUrl = 'https://github.com/60MilesPerHour/Horizon';
   static const String _releasesUrl = '$_repoUrl/releases';
   static const String _issuesUrl = '$_repoUrl/issues';
-  static const String _upstreamUrl = 'https://github.com/ibrahimcetin/reins';
 
   @override
   Widget build(BuildContext context) {
@@ -79,12 +79,13 @@ class HorizonSettings extends StatelessWidget {
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.call_split),
-          title: const Text('Based on Reins'),
-          subtitle: const Text(
-            'Horizon is a GPL-3.0 fork of Reins by Ibrahim Çetin',
+          leading: const Icon(Icons.history_edu_outlined),
+          title: const Text('Where Horizon comes from'),
+          subtitle: const Text('It began as Reins, by İbrahim Çetin'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const OriginsPage()),
           ),
-          onTap: () => launchUrlString(_upstreamUrl),
         ),
         const SizedBox(height: 16),
         const Row(

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:horizon/Pages/chat_page/subwidgets/horizon_home.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
 import 'package:horizon/Models/appearance.dart';
@@ -38,7 +40,9 @@ class AppearanceSettingsPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           const _Preview(),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          const _NameTile(),
+          const SizedBox(height: 16),
 
           _SectionTitle('Theme'),
           SegmentedButton<ThemeMode>(
@@ -464,6 +468,56 @@ class _Preview extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The name the home screen greets you by. Optional; without one the
+/// greeting is just "Good evening."
+class _NameTile extends StatefulWidget {
+  const _NameTile();
+
+  @override
+  State<_NameTile> createState() => _NameTileState();
+}
+
+class _NameTileState extends State<_NameTile> {
+  Box get _settings => Hive.box('settings');
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (_settings.get(HorizonHome.nameKey) as String? ?? '').trim();
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ListTile(
+        leading: const Icon(Icons.waving_hand_outlined),
+        title: const Text('Your name'),
+        subtitle: Text(name.isEmpty ? 'For the greeting on the home screen' : name),
+        trailing: const Icon(Icons.edit_outlined, size: 18),
+        onTap: () async {
+          final controller = TextEditingController(text: name);
+          final result = await showDialog<String>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Your name'),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(hintText: 'What should Horizon call you?'),
+                onSubmitted: (v) => Navigator.pop(context, v),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Save')),
+              ],
+            ),
+          );
+          if (result == null) return;
+          await _settings.put(HorizonHome.nameKey, result.trim());
+          if (mounted) setState(() {});
+        },
       ),
     );
   }

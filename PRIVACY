@@ -1,1 +1,3 @@
-Reins app does not track any activity or actions of their users. No private information is being collected by the app.
+Horizon does not track you, and collects nothing about you: there are no accounts, analytics or telemetry.
+
+Your conversations go only to the servers you configure — your own Ollama server, OpenRouter if you add a key, and the search, speech and Home Assistant services you choose to connect. Settings → Security & Privacy lists every one of them, what is sent, and where each credential is stored.

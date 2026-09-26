@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:horizon/Models/ollama_message.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 
 import 'chat_bubble_bottom_sheet.dart';
 
@@ -10,6 +11,34 @@ class ChatBubbleActions {
   final OllamaMessage message;
 
   ChatBubbleActions(this.message);
+
+  /// The message being read aloud right now, if any. One reader for the
+  /// whole app: starting another message stops this one.
+  static String? _readingId;
+
+  /// Reads the message out through the same voice voice mode uses. Tapping it
+  /// again on the message being read stops it.
+  ///
+  /// The model's thinking isn't read — it's scaffolding, not the answer — and
+  /// the text goes in paragraph by paragraph, so speech starts on the first
+  /// one instead of waiting for the whole reply to be synthesised.
+  Future<void> handleReadAloud(BuildContext context) async {
+    final synthesis = context.read<SpeechSynthesisService>();
+    final key = '${message.createdAt.microsecondsSinceEpoch}:${message.content.length}';
+    final wasReading = synthesis.isSpeaking && _readingId == key;
+    await synthesis.stop();
+    if (wasReading) {
+      _readingId = null;
+      return;
+    }
+    _readingId = key;
+    final text = message.content
+        .replaceAll(RegExp(r'<think>[\s\S]*?(</think>|$)'), '')
+        .trim();
+    for (final paragraph in text.split(RegExp(r'\n\s*\n'))) {
+      synthesis.enqueue(paragraph);
+    }
+  }
 
   void handleCopy() {
     Clipboard.setData(ClipboardData(text: message.content));

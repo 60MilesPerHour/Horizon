@@ -32,6 +32,59 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.4.0 — 2026-09-26
+
+**Horizon Voice, rebuilt — and an app that finally looks like its own.**
+
+Voice now works like a conversation. Words appear while you speak,
+transcribed live by a WhisperLive server running large-v3-turbo; the
+microphone is held open for the whole conversation, with a second of pre-roll,
+so the start of a sentence is never lost to a microphone warming up — which
+measured, per turn, as half a second to first audio and a muted warm-up at
+-82 dBFS. When a turn ends is decided by the transcript as well as the level
+meter, so it ends about half a second after you stop in a quiet room, never
+cuts through ongoing sound, and waits longer after "um" or "so". A second pass
+re-transcribes just the stretch where your voice was present, drops segments
+Whisper itself rates as unlikely, and catches the words the live model
+misheard. Whisper's trailing fillers — " end.", "thank you" — are stripped.
+
+**"Hey Horizon."** A wake word on openWakeWord and ONNX Runtime, heard
+entirely on the phone. It keeps listening in the background from a microphone
+foreground service, and after the app is swiped away — the Flutter engine now
+belongs to the application, not the window. Heard with no window open, it
+opens voice through the assistant session. Balanced or Strict sensitivity,
+chosen from real near-miss measurements: people say it faster than the
+synthetic voices it was trained on.
+
+Voice replies are told that transcription isn't perfect, that they should
+never be confidently incorrect, and that the user's correction wins. When Home
+Assistant is configured, the model is told it can operate it, and to name a
+specific limit rather than claim it can't.
+
+**A new look: light, space and warmth.** A greeting instead of an empty
+screen, with a glowing horizon line and a few quiet suggestions; a floating
+composer with the model inside it and one button that is a breathing orange
+voice orb until you type, then an orange send button. Replies read like a
+page. Voice sits on black, the lyrics view lighting the sentence being spoken
+in orange, with an orb that swells with your voice. Light mode is warm paper.
+Your name, if you give it, goes in the greeting.
+
+- **Read aloud** in every message's menu.
+- **Where Horizon comes from**: an Origins page (and `ORIGINS.md`) about
+  Reins, İbrahim Çetin's app that Horizon began as — replacing a one-line
+  "Based on Reins" tile. The GPL notice lives there, in full.
+- Reins-era labels replaced: the drawer's "Ollama" row is **New chat**; the
+  macOS app is `Horizon.app`; the web tab says Horizon; the privacy file
+  describes Horizon.
+- Fixes: the chat typewriter threw on a one-character buffer and stalled the
+  reply; playback could hang on a missed completion event; a voice turn could
+  be wiped by the previous one's teardown; the recognition proxy could loop
+  between two Horizon installs.
+- Profile builds install alongside the release as `com.miles.horizon.dev`.
+- ONNX Runtime 1.22 is bundled for 16 KB page alignment.
+
+---
+
 ## v4.3.0 — 2026-09-18
 
 **Endpointing, rewritten — and the transcription model exonerated.** Away from

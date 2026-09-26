@@ -22,7 +22,7 @@
       <li>Edit and regenerate any message in the conversation</li>
     </ul>
     <p>
-      Horizon is a fork of Reins by Ibrahim Çetin. The original Ollama-focused client and Flutter scaffolding are his work; Horizon extends it into a multi-provider client with hardened networking and self-hosted-friendly features.
+      Horizon began as Reins, a Flutter client for Ollama by İbrahim Çetin, and grew from there into its own app. Portions derived from Reins remain under GPL-3.0; see ORIGINS.md.
     </p>
   </description>
 

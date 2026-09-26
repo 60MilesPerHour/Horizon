@@ -14,7 +14,7 @@ class ChatSelectModelButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextButton.icon(
       icon: const Icon(Icons.auto_awesome_outlined),
-      label: Text(currentModelName ?? 'Select a model to start'),
+      label: Text(currentModelName ?? 'Choose a model to begin'),
       iconAlignment: IconAlignment.end,
       onPressed: onPressed,
     );
