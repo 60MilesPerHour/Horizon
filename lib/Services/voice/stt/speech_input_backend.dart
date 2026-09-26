@@ -12,7 +12,19 @@ enum SttBackend {
   whisper,
 
   /// ElevenLabs Scribe. Paid per hour, very accurate, no hardware needed.
-  elevenLabs;
+  elevenLabs,
+
+  /// A WhisperLive server over a WebSocket: audio goes up while it is being
+  /// spoken and text comes back about a second behind the voice, revised as
+  /// the words firm up. The only backend here that transcribes *during* a
+  /// turn rather than after it, which is what makes voice mode feel like a
+  /// conversation instead of a form submission.
+  ///
+  /// Needs a GPU and its own container — Speaches cannot do this: its
+  /// `/v1/realtime` endpoint has good server-side VAD but only transcribes
+  /// once the audio buffer is committed, so the transcript still lands after
+  /// the speaker stops.
+  live;
 
   static SttBackend fromString(String? value) {
     switch (value) {
@@ -20,6 +32,8 @@ enum SttBackend {
         return SttBackend.whisper;
       case 'elevenlabs':
         return SttBackend.elevenLabs;
+      case 'live':
+        return SttBackend.live;
       default:
         return SttBackend.device;
     }
@@ -33,6 +47,8 @@ enum SttBackend {
         return 'whisper';
       case SttBackend.elevenLabs:
         return 'elevenlabs';
+      case SttBackend.live:
+        return 'live';
     }
   }
 
@@ -44,17 +60,30 @@ enum SttBackend {
         return 'Whisper server';
       case SttBackend.elevenLabs:
         return 'ElevenLabs';
+      case SttBackend.live:
+        return 'Live (WhisperLive)';
     }
   }
 
-  /// Whether this backend streams partial text as the user speaks. Only the
-  /// platform recogniser does; the others transcribe a finished clip, so the
-  /// UI has to show a level meter instead of words appearing.
-  bool get hasPartialResults => this == SttBackend.device;
+  /// Whether this backend streams partial text as the user speaks.
+  ///
+  /// The platform recogniser and WhisperLive do; the upload backends
+  /// transcribe a finished clip, so for those the UI has to show a level
+  /// meter instead of words appearing.
+  bool get hasPartialResults =>
+      this == SttBackend.device || this == SttBackend.live;
 
-  /// Whether this backend needs audio captured and uploaded, which is what
-  /// makes endpointing our problem rather than the recogniser's.
+  /// Whether ending the turn is this app's job rather than the recogniser's.
+  ///
+  /// True for everything that captures its own audio — the upload backends
+  /// and the live one. Only the platform recogniser decides for itself when
+  /// you have stopped talking.
   bool get needsRecording => this != SttBackend.device;
+
+  /// Whether a finished clip gets uploaded, which is what makes turn audio a
+  /// file on disk and an HTTP request rather than a socket.
+  bool get uploadsClip =>
+      this == SttBackend.whisper || this == SttBackend.elevenLabs;
 }
 
 /// What a transcription attempt produced.

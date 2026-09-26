@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
+import 'package:horizon/Services/voice/stt/whisper_live_client.dart';
 
 enum VoicePhase {
   /// Nothing happening; tap to talk.
@@ -43,7 +44,32 @@ class VoiceSessionController extends ChangeNotifier {
         _synthesis = synthesis {
     _chatProvider.addListener(_onChatChanged);
     _chatProvider.streamingContent.addListener(_onStreamingText);
+    _synthesis.startedChunks.addListener(notifyListeners);
+    // The live backend reports more than a string: which words it has
+    // finalised, and which are still being revised. Plain text still arrives
+    // through the ordinary result callback, so this only feeds the display.
+    _levelUpdates = _recognition.levels.listen((_) {
+      if (_phase != VoicePhase.listening || hearing) return;
+      hearing = true;
+      _heardOnce = true;
+      notifyListeners();
+    });
+    _liveUpdates = _recognition.liveTranscripts.listen((live) {
+      if (_phase != VoicePhase.listening) return;
+      liveCommitted = live.committed;
+      liveTail = live.tail;
+      notifyListeners();
+    });
   }
+
+  StreamSubscription<LiveTranscript>? _liveUpdates;
+  StreamSubscription<double>? _levelUpdates;
+
+  /// Whether audio is actually arriving this turn. "Listening" is only true
+  /// once it is: the screen used to say it the moment the microphone was
+  /// asked for, a second before it delivered anything, and people started
+  /// talking into that second.
+  bool hearing = false;
 
   VoicePhase _phase = VoicePhase.idle;
   VoicePhase get phase => _phase;
@@ -53,8 +79,38 @@ class VoiceSessionController extends ChangeNotifier {
   /// What the user is saying / just said.
   String transcript = '';
 
+  /// The finalised part of what is being said right now, and the part still
+  /// being revised. Only the live backend fills these in; everything else
+  /// leaves [liveTail] empty and puts the whole thing in [transcript].
+  ///
+  /// Worth the extra two fields: showing the revisable tail dimmed is the
+  /// difference between live transcription looking alive and looking broken,
+  /// because the tail *does* visibly change its mind mid-sentence.
+  String liveCommitted = '';
+  String liveTail = '';
+
+  /// Let the user cut the assistant off by talking over it, rather than
+  /// having to tap. Off by default — see
+  /// [StreamingSpeechSession.watchForOnset]: through a loudspeaker with weak
+  /// echo cancellation, the assistant's own voice can trip it.
+  bool interruptByTalking = false;
+
   /// The reply text as it arrives, for the on-screen caption.
   String reply = '';
+
+  /// Everything said earlier in this session, oldest first, so the screen
+  /// reads as a conversation rather than wiping itself every turn. Only for
+  /// the screen: the chat itself keeps the whole history regardless, and a
+  /// new session — a new controller — starts with this empty.
+  final List<({bool fromUser, String text})> history = [];
+
+  /// Moves the finished exchange into [history] before a new one starts.
+  void _archiveTurn() {
+    final said = transcript.trim();
+    final answered = reply.trim();
+    if (said.isNotEmpty) history.add((fromUser: true, text: said));
+    if (answered.isNotEmpty && error == null) history.add((fromUser: false, text: answered));
+  }
 
   /// Whether replies get read aloud at all. Off makes this a dictation box.
   bool speakReplies = true;
@@ -72,17 +128,44 @@ class VoiceSessionController extends ChangeNotifier {
   /// "still there?" rather than silently going idle.
   bool endedOnSilence = false;
 
-  /// Consecutive turns that heard nothing. The loop stops after a couple so a
-  /// forgotten session doesn't sit with the mic open indefinitely.
+  /// Consecutive turns that heard nothing. The loop stops eventually so a
+  /// forgotten session doesn't sit with the mic open indefinitely — but not
+  /// after two: at eight seconds a turn that was sixteen seconds of patience,
+  /// and pausing to think then meant tapping the mic again.
   int _silentTurns = 0;
-  static const int _maxSilentTurns = 2;
+  static const int _maxSilentTurns = 5;
 
   /// How much of [reply] has already been handed to the synthesiser.
   int _spokenUpTo = 0;
 
+  /// Where each chunk handed to the synthesiser ends in [reply], in order,
+  /// and the synthesiser's chunk count when this reply began. Together they
+  /// say which stretch of the reply is coming out of the speaker right now.
+  final List<int> _chunkEnds = [];
+  int _chunkBase = 0;
+
+  /// The part of [reply] being spoken right now, as `(start, end)`, or null
+  /// when nothing of this reply is playing yet. What the caption lights up.
+  (int, int)? get speakingRange {
+    final index = _synthesis.startedChunks.value - _chunkBase - 1;
+    if (index < 0 || index >= _chunkEnds.length) return null;
+    final start = index == 0 ? 0 : _chunkEnds[index - 1];
+    return (start, _chunkEnds[index].clamp(start, reply.length));
+  }
+
+  void _resetChunks() {
+    _chunkEnds.clear();
+    _chunkBase = _synthesis.startedChunks.value;
+  }
+
   /// True between sending a prompt and the stream finishing, so a stray
   /// notification from an unrelated chat can't end the turn.
   bool _awaitingReply = false;
+
+  /// Set once the held microphone has delivered audio in this session —
+  /// from then on a new turn is hearing from its first moment.
+  bool get _heardBefore => _heardOnce;
+  bool _heardOnce = false;
 
   bool get isBusy =>
       _phase == VoicePhase.listening ||
@@ -92,12 +175,20 @@ class VoiceSessionController extends ChangeNotifier {
   /// What the assistant is doing out-of-band, e.g. "Reading example.com…".
   String? get activity => _chatProvider.currentChatActivity;
 
-  /// Live microphone level, 0..1, while a recording backend is capturing.
-  /// Whisper and Scribe transcribe a finished clip, so there are no partial
-  /// words to show and this is the only sign the microphone is working.
+  /// Live microphone level, 0..1, whenever this app is doing the capturing.
+  ///
+  /// Shown for the live backend *as well as* the upload ones: with words on
+  /// screen it is no longer the only feedback, but it is still the only thing
+  /// that distinguishes "listening, you haven't said anything" from
+  /// "listening, and a word is on its way".
   Stream<double> get levels => _recognition.levels;
 
-  /// True when the active backend shows a level meter rather than live text.
+  /// Null for the platform recogniser, which has no meter of its own.
+  Stream<double>? get orbLevels =>
+      _recognition.effectiveBackend.needsRecording ? _recognition.levels : null;
+
+  /// True when the active backend can only show a level meter, because it
+  /// transcribes a finished clip and has no words until the turn is over.
   bool get showsLevelMeter =>
       !_recognition.effectiveBackend.hasPartialResults;
 
@@ -109,8 +200,13 @@ class VoiceSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(_liveUpdates?.cancel());
+    unawaited(_levelUpdates?.cancel());
+    unawaited(_recognition.releaseMicrophone());
+    unawaited(_recognition.stopWatching());
     _chatProvider.removeListener(_onChatChanged);
     _chatProvider.streamingContent.removeListener(_onStreamingText);
+    _synthesis.startedChunks.removeListener(notifyListeners);
     _recognition.cancel();
     _synthesis.stop();
     super.dispose();
@@ -118,8 +214,31 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _setPhase(VoicePhase phase) {
     if (_phase == phase) return;
+    final wasSpeaking = _phase == VoicePhase.speaking;
     _phase = phase;
+    _recognition.assistantSpeaking = phase == VoicePhase.speaking;
     notifyListeners();
+
+    // Arm and disarm the interruption watcher on the edges of the speaking
+    // phase, rather than at each of the several places that start speech.
+    if (phase == VoicePhase.speaking) {
+      unawaited(_armInterruption());
+    } else if (wasSpeaking) {
+      unawaited(_recognition.stopWatching());
+    }
+  }
+
+  /// Opens the microphone to listen only for the user starting to talk while
+  /// the assistant is reading a reply out.
+  Future<void> _armInterruption() async {
+    if (!interruptByTalking || !_recognition.canWatchForOnset) return;
+    await _recognition.watchForOnset(onSpeech: () {
+      // Phases move on their own; by the time speech is heard the reply may
+      // already have finished, and interrupting nothing would restart the
+      // microphone behind the user's back.
+      if (_phase != VoicePhase.speaking) return;
+      unawaited(interrupt());
+    });
   }
 
   /// The single button: start listening, or interrupt whatever is happening.
@@ -138,6 +257,10 @@ class VoiceSessionController extends ChangeNotifier {
         await interrupt();
       case VoicePhase.idle:
       case VoicePhase.error:
+        // A tap is the user asking, whatever an earlier stop left behind —
+        // stopSession() on leaving the app used to swallow the first tap
+        // after coming back.
+        _leaving = false;
         await startListening();
     }
   }
@@ -162,11 +285,17 @@ class VoiceSessionController extends ChangeNotifier {
     _awaitingReply = false;
     await _synthesis.stop();
     await _recognition.cancel();
+    await _recognition.releaseMicrophone();
     _chatProvider.cancelCurrentStreaming();
     _setPhase(VoicePhase.idle);
   }
 
   Future<void> startListening() async {
+    // A tap on the orb is a fresh start, and so is the screen opening: the
+    // silence budget only counts turns the loop reopened by itself.
+    if (_phase == VoicePhase.idle || _phase == VoicePhase.error) {
+      _silentTurns = 0;
+    }
     if (_leaving) {
       _leaving = false;
       _setPhase(VoicePhase.idle);
@@ -177,10 +306,19 @@ class VoiceSessionController extends ChangeNotifier {
     // the assistant's own voice back into the next prompt.
     await _synthesis.stop();
 
+    _archiveTurn();
     error = null;
     transcript = '';
+    liveCommitted = '';
+    liveTail = '';
     reply = '';
     _spokenUpTo = 0;
+    _resetChunks();
+    await _recognition.stopWatching();
+    // Open for the conversation, not the turn. After the first turn this is
+    // already true and returns at once.
+    final held = await _recognition.holdMicrophone();
+    hearing = held && _heardBefore;
     _setPhase(VoicePhase.listening);
 
     final started = await _recognition.listen(
@@ -199,6 +337,12 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _onRecognitionResult(String text, bool isFinal) {
     transcript = text;
+    if (isFinal) {
+      // Nothing is provisional any more, so the dimmed tail becomes ordinary
+      // text rather than sitting there half-faded under the reply.
+      liveCommitted = text;
+      liveTail = '';
+    }
     notifyListeners();
     if (!isFinal) return;
 
@@ -241,8 +385,11 @@ class VoiceSessionController extends ChangeNotifier {
     await _synthesis.stop();
     await _recognition.cancel();
 
+    _archiveTurn();
     error = null;
     transcript = prompt;
+    liveCommitted = prompt;
+    liveTail = '';
     notifyListeners();
     await _send(prompt);
   }
@@ -251,6 +398,7 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoicePhase.thinking);
     reply = '';
     _spokenUpTo = 0;
+    _resetChunks();
     _awaitingReply = true;
 
     try {
@@ -279,8 +427,19 @@ class VoiceSessionController extends ChangeNotifier {
     }
 
     _flushRemainingSpeech();
-    _setPhase(_synthesis.isSpeaking ? VoicePhase.speaking : VoicePhase.idle);
-    await _waitForSpeechToFinish();
+    if (_synthesis.isSpeaking) {
+      _setPhase(VoicePhase.speaking);
+      await _waitForSpeechToFinish();
+      return;
+    }
+    // Nothing left to say: the reply was already spoken while it streamed,
+    // or replies are muted. The loop still has to go round — this used to
+    // drop to idle with "Tap to talk" and end the conversation.
+    _setPhase(VoicePhase.idle);
+    if (!continuousMode || _leaving) return;
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (_phase != VoicePhase.idle) return;
+    await startListening();
   }
 
   Future<void> _waitForSpeechToFinish() async {
@@ -318,7 +477,9 @@ class VoiceSessionController extends ChangeNotifier {
 
     final chunk = reply.substring(_spokenUpTo, boundary);
     _spokenUpTo = boundary;
-    _synthesis.enqueue(chunk);
+    // A chunk that cleans to nothing (a URL, emoji) is never played, so it
+    // mustn't count as one — its text rides along with the next chunk.
+    if (_synthesis.enqueue(chunk)) _chunkEnds.add(boundary);
     if (_phase == VoicePhase.thinking) _setPhase(VoicePhase.speaking);
   }
 
@@ -327,7 +488,7 @@ class VoiceSessionController extends ChangeNotifier {
     if (_spokenUpTo >= reply.length) return;
     final tail = reply.substring(_spokenUpTo);
     _spokenUpTo = reply.length;
-    _synthesis.enqueue(tail);
+    if (_synthesis.enqueue(tail)) _chunkEnds.add(reply.length);
   }
 
   /// Index just past the *last* sentence terminator at or after [from], or

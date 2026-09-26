@@ -42,6 +42,22 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Overridden per build type so a test build can carry a different
+        // name on the launcher.
+        manifestPlaceholders["appLabel"] = "Horizon"
+    }
+
+    // ONNX Runtime (the "Hey Horizon" wake word) ships twice: the Flutter
+    // plugin bundles a 2023 build (1.15.1) whose ELF segments are 4 KB
+    // aligned, which Android 15+ flags as not 16 KB compatible. The app
+    // carries the official 1.22 build in src/main/jniLibs instead, and the
+    // app module's copy wins here. The plugin only calls ORT's C API, which
+    // is versioned and backwards compatible — checked by running the wake
+    // word tests against 1.22.
+    packaging {
+        jniLibs {
+            pickFirsts += ["**/libonnxruntime.so"]
+        }
     }
 
     signingConfigs {
@@ -57,6 +73,25 @@ android {
         release {
             // Use release signing config if keystore exists, otherwise use debug
             signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+
+        // A test build that lives alongside the installed app.
+        //
+        // The release keystore is a CI secret, so anything built on a laptop
+        // is signed with a different key — and Android refuses to install
+        // that over an existing app, which would mean uninstalling Horizon
+        // and losing that device's chats to try a change. A suffixed
+        // application id sidesteps the whole problem: `com.miles.horizon.dev`
+        // is a different app as far as Android is concerned, so both sit on
+        // the launcher and the real one is never touched.
+        //
+        // Profile rather than debug because this is for judging voice
+        // latency: profile is AOT-compiled like release, where debug runs the
+        // interpreter and would make every measurement a lie.
+        profile {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            manifestPlaceholders["appLabel"] = "Horizon dev"
         }
     }
 }

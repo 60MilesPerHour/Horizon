@@ -259,7 +259,7 @@ class ChatProvider extends ChangeNotifier {
     final chat = await _createNewChatInternal(model, firstPrompt: null);
     await _databaseService.updateChat(
       chat,
-      newTitle: 'Assistant',
+      newTitle: 'Horizon Voice',
       newSystemPrompt: systemPrompt,
     );
     _chats[0] = (await _databaseService.getChat(chat.id))!;
@@ -719,7 +719,11 @@ class ChatProvider extends ChangeNotifier {
         // arrivals can drop thousands of characters at once, and the old cap
         // of 48 left a backlog that then snapped onto screen all at once at
         // stream end. 160 drains a 4K burst in ~1s while still animating.
+        // Never more than is there: with one character pending, a floor of
+        // two sliced past the end, threw inside the timer and dropped the
+        // character — and the reply stalled on screen with it.
         var n = (s.length ~/ 4).clamp(2, 160);
+        if (n > s.length) n = s.length;
         // Don't cut between the halves of a surrogate pair. `substring` works
         // on UTF-16 code units, so slicing an emoji down the middle emits a
         // lone surrogate — which renders as the unknown-glyph box for one
@@ -903,6 +907,9 @@ class ChatProvider extends ChangeNotifier {
       if (native) {
         tools = _toolService.availableTools(chatProvider: chat.provider);
         if (tools.isNotEmpty) systemAddon += ToolConstants.systemPromptAddon;
+        if (tools.any((t) => t.name.startsWith('ha_'))) {
+          systemAddon += VoiceConstants.homeAssistantAddon;
+        }
       } else if (_webSearch.isConfigured) {
         systemAddon += WebSearchConstants.systemPromptAddon;
         String? context;
@@ -919,6 +926,10 @@ class ChatProvider extends ChangeNotifier {
 
     if (chat.options.artifacts) {
       systemAddon += ArtifactConstants.systemPromptAddon;
+    }
+
+    if (isAssistantChat(chat)) {
+      systemAddon += VoiceConstants.transcriptionAddon;
     }
 
     final effectiveChat =

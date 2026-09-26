@@ -237,6 +237,10 @@ class TurnEndpointer {
   /// True once sustained speech has been heard.
   bool get speechHeard => _latched;
 
+  /// Unbroken time back down at the room since speech was last heard. Zero
+  /// until speech has latched, and while someone is talking.
+  Duration get quietFor => _latched ? _silence : Duration.zero;
+
   /// How much of the turn was speech. Used to reject clips that are all room.
   Duration get speechDuration => _speech;
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
@@ -9,7 +10,10 @@ import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/elevenlabs_transcriber.dart';
 import 'package:horizon/Services/voice/stt/speech_input_backend.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
+import 'package:horizon/Services/voice/stt/whisper_live_client.dart';
 import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
+import 'package:horizon/Services/voice/wake/wake_word_detector.dart';
+import 'package:horizon/Services/voice/wake/wake_word_listener.dart';
 import 'package:horizon/Pages/settings_page/subwidgets/speech_server_fields.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
@@ -33,6 +37,15 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
 
   bool? _isDefaultAssistant;
 
+  /// Held rather than set through `initialValue` so "Use my speech server"
+  /// can fill them in.
+  late final TextEditingController _liveAddress = TextEditingController(
+    text: Hive.box('settings').get('live_base_url') as String? ?? '',
+  );
+  late final TextEditingController _liveBackupAddress = TextEditingController(
+    text: Hive.box('settings').get('live_backup_url') as String? ?? '',
+  );
+
   List<SpeechVoice> _elevenLabsVoices = const [];
   bool _loadingVoices = false;
   bool _previewingVoice = false;
@@ -43,11 +56,19 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     _refreshAssistantRole();
   }
 
+  @override
+  void dispose() {
+    _liveAddress.dispose();
+    _liveBackupAddress.dispose();
+    super.dispose();
+  }
+
   Box get _settings => Hive.box('settings');
   SpeechSynthesisService get _synthesis =>
       context.read<SpeechSynthesisService>();
   SpeechInputService get _input => context.read<SpeechInputService>();
   WhisperTranscriber get _whisper => context.read<WhisperTranscriber>();
+  WhisperLiveClient get _liveClient => context.read<WhisperLiveClient>();
   ElevenLabsTranscriber get _scribe => context.read<ElevenLabsTranscriber>();
 
   Future<void> _refreshAssistantRole() async {
@@ -69,28 +90,49 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
-          _section('Assistant'),
+          _section('Horizon Voice'),
           _assistantRoleTile(),
+          const SizedBox(height: 8),
+          _wakeWordTile(),
           const SizedBox(height: 8),
           _assistantModelTile(),
           const SizedBox(height: 8),
           _speakRepliesTile(),
+          const SizedBox(height: 8),
+          _interruptByTalkingTile(),
           const Divider(height: 32),
 
           _section('Speech to text'),
           _sectionNote(
-            'The device recogniser is free, works offline once a language pack '
-            'is installed, and shows words as you speak. The other two '
-            'transcribe a finished recording, so they are more accurate but '
-            'show a level meter instead of live text. If the one you pick '
-            "isn't reachable, the device recogniser covers that turn rather "
-            'than losing what you said.',
+            'Live streams audio to a WhisperLive server and shows Whisper-'
+            'grade words about a second behind your voice — the best of both, '
+            'if you have a GPU to run it on. The device recogniser is free and '
+            'works offline once a language pack is installed, also with live '
+            'words. Whisper and Scribe transcribe a finished recording: '
+            'accurate, but you watch a level meter and then wait. Whichever '
+            "you pick, an unreachable server doesn't lose the turn — it falls "
+            'back a step and says so.',
           ),
           const SizedBox(height: 12),
           _sttBackendSelector(),
           const SizedBox(height: 12),
           if (_input.backend == SttBackend.whisper) _whisperFields(),
           if (_input.backend == SttBackend.elevenLabs) _scribeNote(),
+          if (_input.backend == SttBackend.live) ...[
+            _liveFields(),
+            const SizedBox(height: 20),
+            Text('Accuracy pass', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+              'Optional. When a live turn ends, the part where your voice was '
+              'present is transcribed once more by this server with a bigger '
+              'model, and that version is the one sent. Catches words the live '
+              'model misheard or invented. Adds a quarter of a second on a warm GPU.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            _whisperFields(),
+          ],
           const SizedBox(height: 8),
           _recognitionLocalePicker(),
           const Divider(height: 32),
@@ -181,6 +223,87 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     );
   }
 
+  Widget _wakeWordTile() {
+    final wake = context.watch<WakeWordListener>();
+    final phrase = wake.phrase ?? 'Hey Horizon';
+    final String status;
+    if (wake.problem != null) {
+      status = wake.problem!;
+    } else if (!wake.enabled) {
+      status = 'Say "$phrase" to open Horizon Voice without touching the '
+          'phone. Heard on this device only; nothing is recorded or sent.';
+    } else if (wake.listensInBackground) {
+      status = 'Listening for "$phrase", in the background too. The '
+          'notification is Android\'s rule for a microphone in use.';
+    } else if (wake.isListening) {
+      status = 'Listening for "$phrase" while Horizon is open. Allow '
+          'notifications to keep listening in the background.';
+    } else {
+      status = 'Listens for "$phrase" whenever Horizon is open on screen.';
+    }
+    final strict = wake.sustain == WakeWordDetector.strictSustain;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(children: [
+      SwitchListTile(
+        secondary: const Icon(Icons.hearing_outlined),
+        title: Text('"$phrase"'),
+        subtitle: Text(status, style: Theme.of(context).textTheme.bodySmall),
+        value: wake.enabled,
+        onChanged: (value) async {
+          if (value) {
+            // The background service needs its notification shown to count
+            // as running (Android 13+). Asked here, when the reason is
+            // obvious, rather than at first launch.
+            try {
+              final status =
+                  await FlutterForegroundTask.checkNotificationPermission();
+              if (status != NotificationPermission.granted) {
+                await FlutterForegroundTask.requestNotificationPermission();
+              }
+            } catch (_) {}
+          }
+          await _settings.put('voice_wake_word', value);
+          await wake.setEnabled(value);
+        },
+      ),
+      if (wake.enabled)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  strict
+                      ? 'Strict — fewer false wakes, say it deliberately.'
+                      : 'Balanced — wakes on how people actually say it; '
+                          'now and then on "horizon" in conversation.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Balanced')),
+                  ButtonSegment(value: true, label: Text('Strict')),
+                ],
+                selected: {strict},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) async {
+                  final useStrict = s.first;
+                  wake.sustain = useStrict
+                      ? WakeWordDetector.strictSustain
+                      : WakeWordDetector.balancedSustain;
+                  await _settings.put('voice_wake_sensitivity', useStrict ? 'strict' : 'balanced');
+                },
+              ),
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _assistantModelTile() {
     final chatProvider = context.watch<ChatProvider>();
     final selected = _settings.get('assistant_model') as String? ??
@@ -190,7 +313,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
       margin: EdgeInsets.zero,
       child: ListTile(
         leading: const Icon(Icons.psychology_outlined),
-        title: const Text('Assistant model'),
+        title: const Text('Horizon Voice model'),
         subtitle: Text(
           selected ?? 'Whatever is available',
           style: Theme.of(context).textTheme.bodySmall,
@@ -199,7 +322,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         onTap: () async {
           final model = await showModelSelectionBottomSheet(
             context: context,
-            title: 'Assistant Model',
+            title: 'Horizon Voice model',
             currentModelName: selected,
           );
           if (model == null) return;
@@ -234,6 +357,28 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
     );
   }
 
+  Widget _interruptByTalkingTile() {
+    final enabled =
+        _settings.get('voice_interrupt_by_talking', defaultValue: false)
+            as bool;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: SwitchListTile(
+        title: const Text('Interrupt by talking'),
+        subtitle: const Text(
+          'Start speaking to cut a reply short instead of tapping. Keeps the '
+          "microphone open while the reply is read out — best with "
+          'headphones, since a loudspeaker can make it interrupt itself.',
+        ),
+        value: enabled,
+        onChanged: (value) async {
+          await _settings.put('voice_interrupt_by_talking', value);
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
   // ============================================================
   // Speech to text
   // ============================================================
@@ -256,6 +401,11 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
           icon: Icon(Icons.cloud_outlined),
           label: Text('Scribe'),
         ),
+        ButtonSegment(
+          value: SttBackend.live,
+          icon: Icon(Icons.graphic_eq),
+          label: Text('Live'),
+        ),
       ],
       selected: {_input.backend},
       onSelectionChanged: (selection) async {
@@ -263,6 +413,118 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
         setState(() => _input.backend = backend);
         await _settings.put('stt_backend', backend.storageValue);
       },
+    );
+  }
+
+  Widget _liveFields() {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'A WhisperLive server (Collabora, MIT). Plain addresses, no model '
+          'picker: WhisperLive has no model list endpoint and takes a '
+          'faster-whisper name directly.\n\n'
+          'docker run -d --gpus all -p 9090:9090 '
+          'ghcr.io/collabora/whisperlive-gpu:latest',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _liveAddress,
+          autocorrect: false,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: 'Address on this network',
+            hintText: 'http://192.168.1.10:9090',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (value) {
+            _liveClient.endpoint.primary = value;
+            _liveClient.endpoint.reset();
+            _settings.put('live_base_url', value);
+          },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _liveBackupAddress,
+          autocorrect: false,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: 'Address from anywhere (optional)',
+            hintText: 'live.example.com',
+            helperText: 'A tunnel hostname. Uses the same Access service '
+                'token as chat.',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (value) {
+            _liveClient.endpoint.backup = value;
+            _liveClient.endpoint.reset();
+            _settings.put('live_backup_url', value);
+          },
+        ),
+        const SizedBox(height: 8),
+        _shareSpeechServerButton(),
+        const SizedBox(height: 12),
+        TextFormField(
+          initialValue: _settings.get('live_model') as String? ??
+              WhisperLiveClient.defaultModel,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'Model',
+            hintText: WhisperLiveClient.defaultModel,
+            helperText: 'small.en keeps up with a speaker on one 3090. '
+                'Bigger models fall behind and never catch up.',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (value) {
+            _liveClient.model = value;
+            _settings.put('live_model', value);
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Points live transcription at the speech server already configured
+  /// above, on WhisperLive's shared path.
+  ///
+  /// The arrangement this fills in is one hostname for the whole speech
+  /// stack: a proxy in front routes `/live` to WhisperLive and everything
+  /// else to the transcription and speech API. One tunnel route, one Access
+  /// app, one service token, and — the point of the button — one address to
+  /// keep up to date instead of three.
+  Widget _shareSpeechServerButton() {
+    final base = _settings.get('whisper_base_url') as String? ?? '';
+    final backup = _settings.get('whisper_backup_url') as String? ?? '';
+    final derivedBase = WhisperLiveClient.sharedWith(base);
+    final derivedBackup = WhisperLiveClient.sharedWith(backup);
+    final available = derivedBase.isNotEmpty || derivedBackup.isNotEmpty;
+    final already = _liveAddress.text == derivedBase &&
+        _liveBackupAddress.text == derivedBackup;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        onPressed: !available || already
+            ? null
+            : () async {
+                _liveAddress.text = derivedBase;
+                _liveBackupAddress.text = derivedBackup;
+                _liveClient.endpoint.primary = derivedBase;
+                _liveClient.endpoint.backup = derivedBackup;
+                _liveClient.endpoint.reset();
+                await _settings.put('live_base_url', derivedBase);
+                await _settings.put('live_backup_url', derivedBackup);
+                if (mounted) setState(() {});
+              },
+        icon: const Icon(Icons.link, size: 18),
+        label: Text(
+          already
+              ? 'Sharing your speech server'
+              : 'Use my speech server (adds ${WhisperLiveClient.sharedPath})',
+        ),
+      ),
     );
   }
 

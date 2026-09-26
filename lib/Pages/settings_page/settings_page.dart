@@ -80,7 +80,7 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.graphic_eq,
           title: 'Voice',
-          subtitle: 'Assistant model, speech recognition, and the voice that '
+          subtitle: 'Horizon Voice model, speech recognition, and the voice that '
               'reads replies',
           pageBuilder: _voicePage,
         ),

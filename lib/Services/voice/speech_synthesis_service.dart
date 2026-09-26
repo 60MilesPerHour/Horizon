@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -194,6 +195,11 @@ class SpeechSynthesisService {
   /// Whether audio is currently coming out of the device.
   bool get isSpeaking => _speaking;
 
+  /// Counts chunks as they *start playing* — not as they are queued — so a
+  /// caption can light up the sentence you are actually hearing. Only ever
+  /// goes up; a listener keeps its own baseline.
+  final ValueNotifier<int> startedChunks = ValueNotifier<int>(0);
+
   /// The engine that will actually be used, accounting for missing config.
   /// Falling back to the device voice means a missing key is a worse-sounding
   /// answer rather than a silent one.
@@ -227,13 +233,15 @@ class SpeechSynthesisService {
     return RemoteEndpoint.resolve(base, '/v1/audio/speech');
   }
 
-  /// Queues [text] to be spoken. Returns immediately.
-  void enqueue(String text) {
+  /// Queues [text] to be spoken. Returns immediately, with whether anything
+  /// was queued — text that cleans to nothing is dropped.
+  bool enqueue(String text) {
     final trimmed = cleanForSpeech(text);
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty) return false;
     _stopped = false;
     _queue.add(trimmed);
     unawaited(_drain());
+    return true;
   }
 
   /// Speaks [text] on its own, cancelling anything queued. Used for short
@@ -289,6 +297,7 @@ class SpeechSynthesisService {
           }
 
           if (bytes != null) {
+            startedChunks.value++;
             await _playBytes(bytes);
             continue;
           }
@@ -296,6 +305,7 @@ class SpeechSynthesisService {
           // silently skipping a sentence of the answer.
         }
 
+        startedChunks.value++;
         await _speakSystem(chunk);
       }
     } finally {
@@ -343,13 +353,43 @@ class SpeechSynthesisService {
   }
 
   Future<void> _playBytes(Uint8List bytes) async {
+    final player = _player;
+    // play() returns as soon as playback starts, so the queue has to wait for
+    // the end or it would all fire at once and talk over itself.
+    //
+    // Waited on as "no longer playing", subscribed *before* play(), and
+    // bounded. The old wait was `onPlayerComplete.first` after play(): a clip
+    // that finished before the subscription, failed to decode, or was
+    // stopped never completes, so the queue hung for good — the reply went
+    // unspoken and the screen sat on "Speaking" until the user tapped.
+    final finished = Completer<void>();
+    final states = player.onPlayerStateChanged.listen((state) {
+      // Paused too: audio focus taken by something else pauses the clip, and
+      // nothing here ever resumes it, so waiting would be waiting for good.
+      if (state == PlayerState.completed ||
+          state == PlayerState.stopped ||
+          state == PlayerState.paused ||
+          state == PlayerState.disposed) {
+        if (!finished.isCompleted) finished.complete();
+      }
+    });
     try {
-      await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
-      // play() returns as soon as playback starts, so wait for the end or the
-      // queue would all fire at once and talk over itself.
-      await _player.onPlayerComplete.first;
-    } catch (_) {
-      // Fall through; the caller already handled a null synthesis.
+      await player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
+      final length = await player
+          .getDuration()
+          .timeout(const Duration(seconds: 2), onTimeout: () => null);
+      // MediaPlayer reports -1 or 0 when it can't tell (a header-less or VBR
+      // MP3); taken at face value that capped every such clip at 3 s.
+      final known = length != null && length > Duration.zero;
+      final limit =
+          (known ? length : const Duration(seconds: 60)) + const Duration(seconds: 3);
+      await finished.future.timeout(limit, onTimeout: () {
+        debugPrint('voice: playback never reported finishing; moving on');
+      });
+    } catch (e) {
+      debugPrint('voice: playback failed: $e');
+    } finally {
+      await states.cancel();
     }
   }
 
@@ -463,8 +503,11 @@ class SpeechSynthesisService {
           )
           .timeout(const Duration(seconds: 30));
 
-      if (response.statusCode != 200) return null;
-      if (response.bodyBytes.isEmpty) return null;
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        debugPrint('voice: tts HTTP ${response.statusCode}, '
+            '${response.bodyBytes.length}B from $base');
+        return null;
+      }
       // An Access login page is a 200 with an HTML body, and handing that to
       // the audio player produces silence rather than an error.
       if (selfHosted.describeAccessBlock(
@@ -482,7 +525,8 @@ class SpeechSynthesisService {
       // utterance is free to fall over to the remote one.
       if (baseUrl != null) return await post(baseUrl);
       return await selfHosted.withFailover(post);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('voice: tts failed, using the device voice: $e');
       // Falls through to the device voice for this sentence.
       return null;
     }

@@ -1,14 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
+import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 import 'package:horizon/Services/voice/voice_session_controller.dart';
+import 'package:horizon/Services/voice/wake/wake_word_listener.dart';
 import 'package:horizon/Widgets/model_selection_bottom_sheet.dart';
 
 /// Full-screen hands-free voice mode.
@@ -45,6 +48,11 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   Future<void> _prepare() async {
+    // Horizon Voice needs the microphone the wake word is holding, and has
+    // to have it before the first turn opens it.
+    await _wakeWord.pause(_holdKey);
+    _lifecycle; // start observing
+    if (!mounted) return;
     final chatProvider = context.read<ChatProvider>();
     final settings = Hive.box('settings');
 
@@ -78,15 +86,23 @@ class _AssistantPageState extends State<AssistantPage> {
       return;
     }
 
+    await _applyVoiceDefaults(chatProvider, chat);
+
     if (!mounted) return;
     final synthesis = context.read<SpeechSynthesisService>();
     final controller = VoiceSessionController(
       chatProvider: chatProvider,
       recognition: context.read<SpeechInputService>(),
       synthesis: synthesis,
-    )..speakReplies =
-        settings.get('voice_speak_replies', defaultValue: true) as bool;
+    )
+      ..speakReplies =
+          settings.get('voice_speak_replies', defaultValue: true) as bool
+      ..interruptByTalking = settings.get(
+        'voice_interrupt_by_talking',
+        defaultValue: false,
+      ) as bool;
 
+    controller.addListener(_onControllerChanged);
     setState(() {
       _controller = controller;
       _preparing = false;
@@ -96,15 +112,56 @@ class _AssistantPageState extends State<AssistantPage> {
     // platform round-trip plus a permission check, and paying for it when the
     // user taps is exactly the delay they notice.
     unawaited(context.read<SpeechInputService>().device.prewarm());
+    unawaited(context.read<SpeechInputService>().prewarm());
 
-    if (widget.autoStart) await controller.startListening();
+    // Always, not only from the assist gesture: opening voice mode *is* the
+    // request to talk, and a screen that then waits for a second tap on a
+    // mic button is the difference between a conversation and a form.
+    await controller.startListening();
+  }
+
+  /// How the assistant should talk when it is being listened to rather than
+  /// read. Without it, a chat model answers a spoken question with a
+  /// chat-length reply — measured at 450-570 tokens a turn, most of a minute
+  /// of speech, with headings and bullets the synthesiser reads out as noise.
+  static const String _voiceSystemPrompt =
+      "You are Horizon, a voice assistant. Everything you write is read aloud, "
+      'so talk the way a person does in conversation: answer in one to three '
+      'short sentences, lead with the answer, and offer to go deeper rather '
+      'than going deeper unasked. No markdown, lists, headings, code blocks, '
+      'emoji or URLs. Spell out numbers and symbols the way they are said. If '
+      'the question was unclear or sounds misheard, ask one short question '
+      'back instead of guessing.';
+
+  /// Voice defaults for the assistant chat, applied only where the chat has
+  /// no setting of its own — a prompt or think choice made on purpose in the
+  /// chat view is left alone.
+  ///
+  /// Thinking off because it is silence: a reasoning model spends its first
+  /// few hundred tokens where nothing can be spoken, and in voice mode that
+  /// reads as the assistant having frozen.
+  Future<void> _applyVoiceDefaults(ChatProvider provider, OllamaChat chat) async {
+    final needsPrompt = (chat.systemPrompt ?? '').trim().isEmpty;
+    final needsThink = chat.options.think == null;
+    // The chat was called "Assistant" before the rename; only that exact
+    // default is changed, never a title the user chose.
+    final needsTitle = chat.title == 'Assistant';
+    if (!needsPrompt && !needsThink && !needsTitle) return;
+    final options = OllamaChatOptions.fromJson(chat.options.toJson());
+    if (needsThink) options.think = false;
+    await provider.updateChat(
+      chat,
+      newTitle: needsTitle ? 'Horizon Voice' : null,
+      newSystemPrompt: needsPrompt ? _voiceSystemPrompt : null,
+      newOptions: needsThink ? options : null,
+    );
   }
 
   Future<void> _changeModel() async {
     final chatProvider = context.read<ChatProvider>();
     final selected = await showModelSelectionBottomSheet(
       context: context,
-      title: 'Assistant Model',
+      title: 'Horizon Voice model',
       currentModelName: chatProvider.currentChat?.model,
     );
     if (selected == null) return;
@@ -126,9 +183,65 @@ class _AssistantPageState extends State<AssistantPage> {
     });
   }
 
+  VoicePhase? _shownPhase;
+
+  /// The backdrop is painted above the body's own ListenableBuilder, so it
+  /// only needs a rebuild when the phase — and with it the colour — changes.
+  void _onControllerChanged() {
+    final phase = _controller?.phase;
+    if (phase == _shownPhase || !mounted) return;
+    setState(() => _shownPhase = phase);
+  }
+
+  late final WakeWordListener _wakeWord = context.read<WakeWordListener>();
+
+  /// This page's own hold on the wake word. A shared key let a replaced
+  /// page's dispose clear the hold of the page that replaced it, and the
+  /// wake word reopened its microphone mid-conversation.
+  late final String _holdKey = 'voice#${identityHashCode(this)}';
+
+  /// Gives the microphone back once this page's own capture has had time to
+  /// close — reopening it on top of a still-closing call-mode capture could
+  /// leave the wake word's recorder routed to silence.
+  Future<void> _releaseWakeWord() async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await _wakeWord.resume(_holdKey);
+  }
+
+  /// Leaving the app ends the conversation and gives the microphone back to
+  /// the wake word. Otherwise pressing home mid-conversation left this page
+  /// holding the microphone in the background, and "Hey Horizon" stayed
+  /// deaf until the user came back and closed it.
+  ///
+  /// Only once the app has *stayed* off screen, though. Opening Horizon from
+  /// the wake word goes through the assistant route, and Android briefly puts
+  /// the assistant session's window over the app and then removes it — a
+  /// hide lasting a fraction of a second. Ending the session on that ended
+  /// every wake-word conversation before the first word, and nothing started
+  /// listening again when the page came back.
+  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onHide: () {
+      _leaveTimer?.cancel();
+      _leaveTimer = Timer(const Duration(milliseconds: 1500), () async {
+        if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) return;
+        await _controller?.stopSession();
+        await _releaseWakeWord();
+      });
+    },
+    onShow: () {
+      _leaveTimer?.cancel();
+      _wakeWord.pause(_holdKey);
+    },
+  );
+  Timer? _leaveTimer;
+
   @override
   void dispose() {
+    _leaveTimer?.cancel();
+    _lifecycle.dispose();
+    _controller?.removeListener(_onControllerChanged);
     _controller?.dispose();
+    unawaited(_releaseWakeWord());
     _composerController.dispose();
     _composerFocus.dispose();
     super.dispose();
@@ -154,23 +267,44 @@ class _AssistantPageState extends State<AssistantPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final phase = _controller?.phase ?? VoicePhase.idle;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 900),
+      curve: Curves.easeInOut,
+      decoration: BoxDecoration(
+        gradient: _VoiceBackdrop.forPhase(phase, theme.brightness),
+      ),
+      child: Theme(
+        data: theme.copyWith(
+          scaffoldBackgroundColor: Colors.transparent,
+          appBarTheme: theme.appBarTheme.copyWith(
+            backgroundColor: Colors.transparent,
+            foregroundColor: _VoiceInk.of(theme.brightness).ink,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            systemOverlayStyle: theme.brightness == Brightness.light
+                ? SystemUiOverlayStyle.dark
+                : SystemUiOverlayStyle.light,
+          ),
+          iconTheme: IconThemeData(color: _VoiceInk.of(theme.brightness).ink),
+        ),
+        child: _scaffold(context, theme),
+      ),
+    );
+  }
+
+  Widget _scaffold(BuildContext context, ThemeData theme) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        // The model name, not a static title: in voice mode there's otherwise
-        // nothing on screen saying which model is about to answer, and the
-        // chat view puts this same control in its app bar.
-        title: TextButton.icon(
-          onPressed: _controller == null ? null : _changeModel,
-          icon: const Icon(Icons.expand_more, size: 20),
-          iconAlignment: IconAlignment.end,
-          label: Text(
-            context.watch<ChatProvider>().currentChat?.model ?? 'Assistant',
-            overflow: TextOverflow.ellipsis,
-          ),
-          style: TextButton.styleFrom(
-            foregroundColor: theme.colorScheme.onSurface,
-            textStyle: theme.textTheme.titleMedium,
-          ),
+        // The product name, with the model underneath as its own dropdown:
+        // which model is about to answer still matters, but it's a detail of
+        // Horizon Voice rather than the name of the screen.
+        centerTitle: true,
+        title: _VoiceTitle(
+          model: context.watch<ChatProvider>().currentChat?.model,
+          ink: _VoiceInk.of(theme.brightness),
+          onChangeModel: _controller == null ? null : _changeModel,
         ),
         actions: [
           if (_controller != null)
@@ -267,7 +401,7 @@ class _AssistantPageState extends State<AssistantPage> {
               child: Center(
                 child: _VoiceOrb(
                   phase: controller.phase,
-                  levels: controller.showsLevelMeter ? controller.levels : null,
+                  levels: controller.orbLevels,
                   onTap: controller.toggle,
                 ),
               ),
@@ -293,27 +427,127 @@ class _AssistantPageState extends State<AssistantPage> {
     );
   }
 
+  /// Caption type: big, heavy, tight — read at a glance from arm's length,
+  /// the way lyrics are, rather than studied like a chat bubble.
+  static TextStyle _lyric(ThemeData theme) =>
+      (theme.textTheme.headlineMedium ?? const TextStyle()).copyWith(
+        fontSize: 30,
+        fontWeight: FontWeight.w800,
+        height: 1.22,
+        letterSpacing: -0.6,
+        color: _VoiceInk.of(theme.brightness).ink,
+      );
+
+  /// What the user said, sitting above the reply like the line just sung.
+  /// The part the recogniser is still revising is fainter again: "trans-"
+  /// really does become "transcription" under you, and in full ink that
+  /// looks like a bug rather than the machine thinking.
+  Widget _transcriptText(ThemeData theme, VoiceSessionController controller) {
+    final ink = _VoiceInk.of(theme.brightness);
+    final listening = controller.phase == VoicePhase.listening;
+    final base = _lyric(theme).copyWith(
+      fontSize: listening ? 30 : 22,
+      color: listening ? ink.ink : ink.past,
+    );
+    final tail = controller.liveTail.trim();
+    if (tail.isEmpty) return Text(controller.transcript, style: base);
+    final committed = controller.liveCommitted.trim();
+    return Text.rich(
+      TextSpan(
+        style: base,
+        children: [
+          if (committed.isNotEmpty) TextSpan(text: '$committed '),
+          TextSpan(
+            text: tail,
+            style: base.copyWith(color: ink.ink.withValues(alpha: 0.5)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The reply as karaoke: what has been spoken fades back, the sentence
+  /// coming out of the speaker now is full white, and what is still to come
+  /// waits in dark ink. With replies muted there is nothing to follow, so it
+  /// is all simply white.
+  Widget _replyText(ThemeData theme, VoiceSessionController controller) {
+    final ink = _VoiceInk.of(theme.brightness);
+    final style = _lyric(theme);
+    final reply = controller.reply;
+    final range = controller.speakReplies ? controller.speakingRange : null;
+    if (range == null) {
+      final waiting = controller.speakReplies &&
+          controller.phase != VoicePhase.idle &&
+          controller.phase != VoicePhase.error;
+      return Text(reply,
+          style: style.copyWith(color: waiting ? ink.upcoming : ink.ink));
+    }
+    final (start, end) = range;
+    return Text.rich(TextSpan(style: style, children: [
+      if (start > 0)
+        TextSpan(text: reply.substring(0, start), style: style.copyWith(color: ink.past)),
+      TextSpan(text: reply.substring(start, end)),
+      if (end < reply.length)
+        TextSpan(
+          text: reply.substring(end),
+          style: style.copyWith(color: ink.upcoming),
+        ),
+    ]));
+  }
+
+  /// Who said a line: small, above it, so a scrolled-back conversation
+  /// still reads as one when the colours alone would leave it ambiguous.
+  Widget _speaker(ThemeData theme, _VoiceInk ink, {required bool fromUser}) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          fromUser ? 'YOU' : 'HORIZON',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: ink.chrome,
+            letterSpacing: 1.4,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+
+  /// An earlier line of this session, in the "already sung" ink.
+  Widget _pastLine(ThemeData theme, _VoiceInk ink, ({bool fromUser, String text}) line) => Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _speaker(theme, ink, fromUser: line.fromUser),
+            Text(
+              line.text,
+              style: _lyric(theme).copyWith(
+                fontSize: line.fromUser ? 20 : 22,
+                fontWeight: line.fromUser ? FontWeight.w600 : FontWeight.w800,
+                color: ink.past,
+              ),
+            ),
+          ],
+        ),
+      );
+
   Widget _buildTranscript(ThemeData theme, VoiceSessionController controller) {
     final hasTranscript = controller.transcript.trim().isNotEmpty;
     final hasReply = controller.reply.trim().isNotEmpty;
 
-    if (!hasTranscript && !hasReply && controller.error == null) {
-      return Center(
+    final ink = _VoiceInk.of(theme.brightness);
+    final hasHistory = controller.history.isNotEmpty;
+    if (!hasTranscript && !hasReply && controller.error == null && !hasHistory) {
+      final listening = controller.phase == VoicePhase.listening;
+      return Align(
+        alignment: const Alignment(-1, -0.2),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Tap to talk',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              // The microphone level now drives the orb's halo instead of a
-              // separate meter here — a widget that appeared and disappeared
-              // in this column is what made everything below it jump.
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 28.0),
+          child: Text(
+            listening
+                ? (controller.hearing ? 'Go ahead, I\'m listening.' : 'One moment…')
+                : 'Tap to talk',
+            style: _lyric(theme).copyWith(
+              fontSize: 36,
+              color: listening ? ink.ink : ink.past,
+            ),
           ),
         ),
       );
@@ -321,33 +555,31 @@ class _AssistantPageState extends State<AssistantPage> {
 
     return SingleChildScrollView(
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (hasTranscript)
-            Text(
-              controller.transcript,
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
+          for (final line in controller.history) _pastLine(theme, ink, line),
+          if (hasHistory && (hasTranscript || hasReply)) const SizedBox(height: 6),
+          if (hasTranscript) _speaker(theme, ink, fromUser: true),
+          if (hasTranscript) _transcriptText(theme, controller),
           if (hasTranscript && (hasReply || controller.error != null))
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
+          if (hasReply && controller.error == null) _speaker(theme, ink, fromUser: false),
           if (controller.error != null)
             SelectableText(
               controller.error!,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(color: theme.colorScheme.error),
+              style: _lyric(theme).copyWith(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: ink.ink,
+              ),
             )
           else if (hasReply)
             // Plain text, not Markdown: this is a caption for something being
             // spoken, and re-parsing Markdown on every streamed tick is the
             // one thing the chat view already learned not to do.
-            Text(
-              controller.reply,
-              style: theme.textTheme.headlineSmall?.copyWith(height: 1.35),
-            ),
+            _replyText(theme, controller),
         ],
       ),
     );
@@ -391,13 +623,13 @@ class _AssistantPageState extends State<AssistantPage> {
           fallback,
           textAlign: TextAlign.center,
           style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.tertiary),
+              ?.copyWith(color: _VoiceInk.of(theme.brightness).chrome),
         ),
       );
     }
 
     final label = switch (controller.phase) {
-      VoicePhase.listening => 'Listening…',
+      VoicePhase.listening => controller.hearing ? 'Listening…' : 'One moment…',
       VoicePhase.thinking => controller.activity ?? 'Thinking…',
       VoicePhase.speaking => 'Speaking — tap to interrupt',
       VoicePhase.error => 'Tap to try again',
@@ -411,7 +643,8 @@ class _AssistantPageState extends State<AssistantPage> {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: theme.textTheme.bodyMedium?.copyWith(
-        color: theme.colorScheme.onSurfaceVariant,
+        color: _VoiceInk.of(theme.brightness).chrome,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -496,20 +729,21 @@ class _VoiceOrbState extends State<_VoiceOrb>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    final (IconData icon, Color colour) = switch (widget.phase) {
-      VoicePhase.listening => (Icons.mic, theme.colorScheme.primary),
-      VoicePhase.thinking => (Icons.auto_awesome, theme.colorScheme.tertiary),
-      VoicePhase.speaking => (Icons.graphic_eq, theme.colorScheme.secondary),
-      VoicePhase.error => (Icons.refresh, theme.colorScheme.error),
-      VoicePhase.idle => (Icons.mic_none, theme.colorScheme.primaryContainer),
+    // White on the backdrop in every phase: the backdrop's colour already
+    // says which phase this is, and a second colour on the orb competed
+    // with it.
+    final IconData icon = switch (widget.phase) {
+      VoicePhase.listening => Icons.mic,
+      VoicePhase.thinking => Icons.auto_awesome,
+      VoicePhase.speaking => Icons.graphic_eq,
+      VoicePhase.error => Icons.refresh,
+      VoicePhase.idle => Icons.mic_none,
     };
-
-    final foreground =
-        ThemeData.estimateBrightnessForColor(colour) == Brightness.dark
-            ? Colors.white
-            : Colors.black87;
+    final ink = _VoiceInk.of(Theme.of(context).brightness);
+    final colour = widget.phase == VoicePhase.idle
+        ? ink.orb.withValues(alpha: 0.85)
+        : ink.orb;
+    final foreground = ink.orbIcon;
 
     return Semantics(
       button: true,
@@ -542,7 +776,7 @@ class _VoiceOrbState extends State<_VoiceOrb>
                     height: _size + 8 + energy * 20,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: colour.withValues(alpha: 0.18 + energy * 0.22),
+                      color: ink.orb.withValues(alpha: 0.14 + energy * 0.26),
                     ),
                   ),
                   Container(
@@ -564,3 +798,154 @@ class _VoiceOrbState extends State<_VoiceOrb>
   }
 }
 
+/// The voice screen's colour, one gradient per phase and per theme.
+///
+/// Full-bleed colour rather than the chat view's black, after Spotify's
+/// lyrics screen: on colour, big type reads as a caption for what you are
+/// hearing instead of another page of text.
+///
+/// Every stop is taken from the app icon — its sky, its sun on the water,
+/// its sea — so the screen and the icon are the same picture. Dark follows
+/// the dark icon's dusk; light follows the daytime icon, softened so dark
+/// type sits on it. Each phase is a different hour of the same scene, so
+/// the screen says what it is doing before you read a word.
+class _VoiceBackdrop {
+  const _VoiceBackdrop._();
+
+  static LinearGradient forPhase(VoicePhase phase, Brightness brightness) {
+    final colors = brightness == Brightness.dark
+        ? switch (phase) {
+            // Night over the water.
+            VoicePhase.idle => const [Color(0xFF1E0A14), Color(0xFF0A1422), Color(0xFF010817)],
+            // The dark icon itself: dusk sky, low sun, sea.
+            VoicePhase.listening => const [Color(0xFF862231), Color(0xFF944F24), Color(0xFF074163)],
+            // Last light going violet.
+            VoicePhase.thinking => const [Color(0xFF5C1F3C), Color(0xFF2E2A5A), Color(0xFF010817)],
+            // The sun on the water.
+            VoicePhase.speaking => const [Color(0xFF955926), Color(0xFF862231), Color(0xFF084265)],
+            VoicePhase.error => const [Color(0xFF6B1522), Color(0xFF2A0A12), Color(0xFF010817)],
+          }
+        : switch (phase) {
+            // Dawn haze.
+            VoicePhase.idle => const [Color(0xFFFFE6DC), Color(0xFFFFF1E6), Color(0xFFE2F0FA)],
+            // The daytime icon, lifted: coral sky, sun, shallow sea.
+            VoicePhase.listening => const [Color(0xFFFF9AA6), Color(0xFFFFC08A), Color(0xFF8FC9EE)],
+            VoicePhase.thinking => const [Color(0xFFF6B9D0), Color(0xFFCDBDF2), Color(0xFFB7D9F5)],
+            VoicePhase.speaking => const [Color(0xFFFFD08A), Color(0xFFFFA27E), Color(0xFF9FD1F2)],
+            VoicePhase.error => const [Color(0xFFFFB0B4), Color(0xFFFFD9DA), Color(0xFFF6E8E8)],
+          };
+    return LinearGradient(
+      begin: const Alignment(-0.4, -1.0),
+      end: const Alignment(0.4, 1.0),
+      colors: colors,
+      stops: const [0.0, 0.55, 1.0],
+    );
+  }
+}
+
+/// Type and control colours that read on [_VoiceBackdrop].
+///
+/// Karaoke in both themes, mirrored: in dark the line being spoken is white
+/// and what's still to come waits in dark ink; in light the line being
+/// spoken is the icon's navy and what's to come waits pale.
+class _VoiceInk {
+  const _VoiceInk({
+    required this.ink,
+    required this.past,
+    required this.upcoming,
+    required this.chrome,
+    required this.orb,
+    required this.orbIcon,
+  });
+
+  /// The line being spoken, and ordinary text.
+  final Color ink;
+
+  /// Already heard: readable, clearly behind you.
+  final Color past;
+
+  /// Not reached yet.
+  final Color upcoming;
+
+  /// Status line and the smaller controls.
+  final Color chrome;
+
+  final Color orb;
+  final Color orbIcon;
+
+  static const _navy = Color(0xFF0B1A2E);
+
+  static const dark = _VoiceInk(
+    ink: Colors.white,
+    past: Color(0x8CFFFFFF),
+    upcoming: Color(0x73000000),
+    chrome: Color(0xCCFFFFFF),
+    orb: Colors.white,
+    orbIcon: Color(0xFF1A0E14),
+  );
+
+  static const light = _VoiceInk(
+    ink: _navy,
+    past: Color(0x8C0B1A2E),
+    upcoming: Color(0xB3FFFFFF),
+    chrome: Color(0xB30B1A2E),
+    orb: _navy,
+    orbIcon: Colors.white,
+  );
+
+  static _VoiceInk of(Brightness brightness) =>
+      brightness == Brightness.dark ? dark : light;
+}
+
+/// "Horizon Voice", with the model beneath it as a small dropdown.
+class _VoiceTitle extends StatelessWidget {
+  const _VoiceTitle({
+    required this.model,
+    required this.ink,
+    required this.onChangeModel,
+  });
+
+  final String? model;
+  final _VoiceInk ink;
+  final VoidCallback? onChangeModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Horizon Voice',
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: ink.ink,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.2,
+          ),
+        ),
+        InkWell(
+          onTap: onChangeModel,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    model ?? 'Choose a model',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: ink.chrome,
+                    ),
+                  ),
+                ),
+                Icon(Icons.expand_more, size: 16, color: ink.chrome),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

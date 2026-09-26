@@ -30,6 +30,10 @@ import android.speech.SpeechRecognizer
  * Delegating makes it harmless instead.
  */
 class HorizonRecognitionService : RecognitionService() {
+    private companion object {
+        const val HORIZON_PACKAGE = "com.miles.horizon"
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private var delegate: SpeechRecognizer? = null
 
@@ -96,9 +100,10 @@ class HorizonRecognitionService : RecognitionService() {
     }
 
     /**
-     * First installed recognition service that isn't this one. Skipping our
-     * own package is the part that matters — without it, delegation would
-     * recurse into this service until the stack gave out.
+     * First installed recognition service that isn't a Horizon build.
+     * Skipping every Horizon package is the part that matters, not just this
+     * one: with the release app and a `.dev` test build both installed, each
+     * would pick the other and delegation would bounce between them forever.
      */
     private fun findDelegateComponent(): ComponentName? {
         val intent = Intent(RecognitionService.SERVICE_INTERFACE)
@@ -110,7 +115,7 @@ class HorizonRecognitionService : RecognitionService() {
 
         for (info in services) {
             val serviceInfo = info.serviceInfo ?: continue
-            if (serviceInfo.packageName == packageName) continue
+            if (serviceInfo.packageName.startsWith(HORIZON_PACKAGE)) continue
             return ComponentName(serviceInfo.packageName, serviceInfo.name)
         }
         return null

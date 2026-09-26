@@ -16,9 +16,22 @@ class HorizonVoiceInteractionService : VoiceInteractionService() {
     override fun onReady() {
         super.onReady()
         // Nothing to warm up: sessions are cheap because they just hand off to
-        // the activity. Hotword detection is deliberately not implemented —
-        // always-on listening is a large privacy cost for an app whose point
-        // is that inference stays on your own hardware.
+        // the activity. The wake word doesn't live here either — it runs in
+        // the app on openWakeWord, opt-in and entirely on the device — but it
+        // uses this instance to open a session, which is the one way Android
+        // lets an app bring its voice UI up from the background.
+        instance = this
+    }
+
+    override fun onShutdown() {
+        instance = null
+        super.onShutdown()
+    }
+
+    companion object {
+        /** Live only while Horizon holds the assistant role. */
+        @Volatile
+        var instance: HorizonVoiceInteractionService? = null
     }
 }
 

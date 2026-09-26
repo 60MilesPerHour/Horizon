@@ -188,7 +188,7 @@ class _ChatPageState extends State<ChatPage> {
       // Nothing to send: offer voice instead of an empty corner.
       return IconButton(
         icon: const Icon(Icons.graphic_eq),
-        tooltip: 'Voice mode',
+        tooltip: 'Horizon Voice',
         color: Theme.of(context).colorScheme.onSurfaceVariant,
         onPressed: () => Navigator.pushNamed(context, '/assistant'),
       );

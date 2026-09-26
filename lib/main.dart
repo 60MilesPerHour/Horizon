@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -20,7 +21,12 @@ import 'package:horizon/Services/voice/stt/elevenlabs_transcriber.dart';
 import 'package:horizon/Services/voice/stt/speech_input_backend.dart';
 import 'package:horizon/Services/voice/stt/speech_input_service.dart';
 import 'package:horizon/Services/voice/stt/voice_recorder.dart';
+import 'package:horizon/Services/voice/stt/mic_pcm_stream.dart';
+import 'package:horizon/Services/voice/stt/streaming_speech_session.dart';
+import 'package:horizon/Services/voice/stt/whisper_live_client.dart';
 import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
+import 'package:horizon/Services/voice/wake/wake_word_detector.dart';
+import 'package:horizon/Services/voice/wake/wake_word_listener.dart';
 import 'package:horizon/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -171,6 +177,21 @@ void main() async {
     cfAccessClientSecret: cfAccessClientSecret,
   );
   final elevenLabsTranscriber = ElevenLabsTranscriber(apiKey: elevenLabsKey);
+  // Live transcription is its own server (WhisperLive speaks a WebSocket, not
+  // the OpenAI transcription API), so it gets its own address pair — and the
+  // same Cloudflare Access token as everything else, because it is the same
+  // tunnel.
+  final whisperLive = WhisperLiveClient(
+    baseUrl: settingsBox.get('live_base_url') as String?,
+    backupUrl: settingsBox.get('live_backup_url') as String?,
+    model: settingsBox.get('live_model') as String?,
+    cfAccessClientId: cfAccessClientId,
+    cfAccessClientSecret: cfAccessClientSecret,
+  );
+  final streamingSpeech = StreamingSpeechSession(
+    mic: MicPcmStream(),
+    client: whisperLive,
+  );
   final speechInput = SpeechInputService(
     device: speechRecognition,
     recorder: VoiceRecorder()
@@ -178,8 +199,13 @@ void main() async {
           (settingsBox.get('voice_upload_wav') as bool?) ?? false,
     whisper: whisperTranscriber,
     elevenLabs: elevenLabsTranscriber,
+    streaming: streamingSpeech,
   )
-    ..backend = SttBackend.fromString(settingsBox.get('stt_backend') as String?)
+    ..backend = _initialSttBackend(
+      settingsBox.get('stt_backend') as String?,
+      liveConfigured: whisperLive.isConfigured,
+      whisperConfigured: whisperTranscriber.isConfigured,
+    )
     ..localeId = (settingsBox.get('voice_locale') as String?) ?? '';
   final speechSynthesis = SpeechSynthesisService(
     engine: SpeechEngine.fromString(settingsBox.get('voice_engine') as String?),
@@ -196,9 +222,20 @@ void main() async {
     rate: (settingsBox.get('voice_rate') as num?)?.toDouble(),
   );
 
+  // "Hey Horizon". Built here rather than in the widget tree so it outlives
+  // any one screen; it opens Horizon Voice through the app's navigator.
+  final wakeWord = WakeWordListener(onWake: HorizonApp.openVoice)
+    ..sustain = (settingsBox.get('voice_wake_sensitivity') as String?) == 'strict'
+        ? WakeWordDetector.strictSustain
+        : WakeWordDetector.balancedSustain;
+  unawaited(wakeWord.setEnabled(
+    (settingsBox.get('voice_wake_word') as bool?) ?? false,
+  ));
+
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: wakeWord),
         ChangeNotifierProvider(create: (_) => AppearanceController()),
         Provider(create: (_) => ollamaService),
         Provider(create: (_) => openrouterService),
@@ -210,6 +247,7 @@ void main() async {
         Provider(create: (_) => speechRecognition),
         Provider(create: (_) => speechSynthesis),
         Provider(create: (_) => whisperTranscriber),
+        Provider(create: (_) => whisperLive),
         Provider(create: (_) => elevenLabsTranscriber),
         Provider(create: (_) => speechInput),
         ChangeNotifierProvider(create: (_) => OllamaHealthMonitor(ollamaService)),
@@ -244,14 +282,49 @@ void main() async {
 class HorizonApp extends StatefulWidget {
   const HorizonApp({super.key});
 
+  /// Needed to push the voice route from outside any widget's BuildContext —
+  /// the platform channel and the wake word both fire from there.
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
+  /// Shows Horizon Voice listening, replacing rather than stacking, so
+  /// repeated gestures or wake words don't build a pile of voice pages.
+  static void pushVoiceRoute() {
+    navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      '/assistant?autostart=1',
+      (route) => route.isFirst,
+    );
+  }
+
+  static const MethodChannel _channel =
+      MethodChannel('com.miles.horizon/assistant');
+
+  /// What the wake word calls. On screen, that's just the route. Behind
+  /// another app, the activity has to be brought forward first — which
+  /// Android only allows through the assistant role or a notification — and
+  /// the route then arrives through [MainActivity.onNewIntent] like an assist
+  /// gesture does.
+  static void openVoice() {
+    final visible =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    if (visible) {
+      pushVoiceRoute();
+      return;
+    }
+    unawaited(_channel.invokeMethod<String>('openVoiceFromBackground').then(
+      (route) => debugPrint('voice: wake word opened Horizon via $route'),
+      onError: (Object e) => debugPrint('voice: could not open Horizon: $e'),
+    ));
+  }
+
   @override
   State<HorizonApp> createState() => _HorizonAppState();
 }
 
 class _HorizonAppState extends State<HorizonApp> {
-  /// Needed to push the assistant route from the platform channel, which
-  /// fires outside any widget's BuildContext.
-  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  /// Tells the wake word when the app comes and goes, so it can take the
+  /// microphone service while it's allowed to and keep listening after.
+  late final AppLifecycleListener _lifecycle;
 
   static const MethodChannel _assistantChannel =
       MethodChannel('com.miles.horizon/assistant');
@@ -264,16 +337,31 @@ class _HorizonAppState extends State<HorizonApp> {
     // activity and so never re-reads the initial route.
     _assistantChannel.setMethodCallHandler((call) async {
       if (call.method != 'openAssistant') return null;
-      final navigator = _navigatorKey.currentState;
-      if (navigator == null) return null;
-      // Replace rather than stack, so repeated gestures don't build a pile of
-      // assistant pages behind each other.
-      navigator.pushNamedAndRemoveUntil(
-        '/assistant?autostart=1',
-        (route) => route.isFirst,
-      );
+      HorizonApp.pushVoiceRoute();
       return null;
     });
+    // An assist launch that reached the native side before this isolate was
+    // listening — a cold start from the gesture, or the wake word bringing
+    // a closed window back.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final pending = await _assistantChannel.invokeMethod<bool>('takePendingAssist');
+        if (pending == true) HorizonApp.pushVoiceRoute();
+      } catch (_) {
+        // No such channel off Android.
+      }
+    });
+    final wakeWord = context.read<WakeWordListener>();
+    _lifecycle = AppLifecycleListener(
+      onResume: wakeWord.appVisible,
+      onHide: wakeWord.appHidden,
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
   }
 
   @override
@@ -284,7 +372,7 @@ class _HorizonAppState extends State<HorizonApp> {
     final appearance = context.watch<AppearanceController>().appearance;
 
     return MaterialApp(
-          navigatorKey: _navigatorKey,
+          navigatorKey: HorizonApp.navigatorKey,
           title: AppConstants.appName,
           theme: HorizonTheme.light(appearance),
           darkTheme: HorizonTheme.dark(appearance),
@@ -348,4 +436,22 @@ class _HorizonAppState extends State<HorizonApp> {
           },
         );
   }
+}
+
+/// The speech-to-text backend to start with.
+///
+/// An explicit choice always wins. Without one, the best configured server
+/// rather than the device recogniser: that default quietly assumes Google's
+/// recogniser is installed, and on a phone without it the "device" backend
+/// is routed through whichever assistant app happens to register a
+/// recognition service — voice mode then hears nothing and says nothing.
+SttBackend _initialSttBackend(
+  String? stored, {
+  required bool liveConfigured,
+  required bool whisperConfigured,
+}) {
+  if (stored != null && stored.isNotEmpty) return SttBackend.fromString(stored);
+  if (liveConfigured) return SttBackend.live;
+  if (whisperConfigured) return SttBackend.whisper;
+  return SttBackend.device;
 }

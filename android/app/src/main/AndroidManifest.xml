@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="Horizon"
-        android:name="${applicationName}"
+        android:label="${appLabel}"
+        android:name=".HorizonApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -51,7 +51,7 @@
              dataSync type is mandatory on Android 14+. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="dataSync"
+            android:foregroundServiceType="dataSync|microphone"
             android:exported="false" />
 
         <!-- Declaring a VoiceInteractionService is the only way to appear in
@@ -61,7 +61,7 @@
             android:name=".HorizonVoiceInteractionService"
             android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:label="Horizon">
+            android:label="${appLabel}">
             <intent-filter>
                 <action android:name="android.service.voice.VoiceInteractionService"/>
             </intent-filter>
@@ -115,6 +115,9 @@
          switches away and the in-flight connection dies mid-response. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- "Hey Horizon" while the app is in the background: Android only allows
+         the microphone there from a microphone-type foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Voice mode: microphone for recognition, audio settings so playback of

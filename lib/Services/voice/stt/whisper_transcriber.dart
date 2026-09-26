@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -182,5 +183,77 @@ class WhisperTranscriber implements RecordedAudioTranscriber {
     final decoded = json.decode(body);
     final text = decoded is Map ? (decoded['text'] ?? '').toString() : '';
     return SttResult(text.trim());
+  }
+
+  /// A second, accurate pass over a turn that live transcription already
+  /// heard: in memory, bounded by [timeout], and with segments Whisper itself
+  /// rates as unlikely speech removed.
+  ///
+  /// The confidence filter is the point. Whisper doesn't fail by returning
+  /// nothing; it fails by writing fluent words for noise or for someone else
+  /// in the room, and those segments carry a tell — a high no-speech
+  /// probability, or a low average log-probability. Dropping them costs
+  /// nothing on clean audio and removes the invented tail on noisy audio.
+  ///
+  /// Never throws; null means "no better answer", and the caller keeps what
+  /// it had.
+  Future<String?> transcribeClip(
+    Uint8List wav, {
+    String? languageCode,
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    if (!isConfigured || wav.isEmpty) return null;
+    try {
+      return await endpoint.withFailover((base) async {
+        final request = http.MultipartRequest('POST', transcriptionUrl(base))
+          ..headers.addAll(endpoint.headersFor(base, bearerToken: apiKey));
+        request.fields['model'] =
+            model.trim().isEmpty ? 'whisper-1' : model.trim();
+        request.fields['response_format'] = 'verbose_json';
+        request.fields[vadFilterField] = 'true';
+        if (languageCode != null && languageCode.isNotEmpty) {
+          request.fields['language'] = languageCode.split(RegExp('[-_]')).first;
+        }
+        request.files.add(
+          http.MultipartFile.fromBytes('file', wav, filename: 'turn.wav'),
+        );
+        final streamed = await HorizonHttp.client.send(request).timeout(timeout);
+        final body = await streamed.stream.bytesToString().timeout(timeout);
+        if (streamed.statusCode != 200 ||
+            endpoint.describeAccessBlock(body, base) != null) {
+          return null;
+        }
+        final decoded = json.decode(body);
+        if (decoded is! Map) return null;
+        return confidentText(decoded);
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Text from a verbose transcription with the unlikely segments removed.
+  /// Falls back to the plain text for a server that sends no segments.
+  static String confidentText(Map<dynamic, dynamic> response) {
+    final segments = response['segments'];
+    if (segments is! List || segments.isEmpty) {
+      return (response['text'] ?? '').toString().trim();
+    }
+    final kept = <String>[];
+    for (final segment in segments) {
+      if (segment is! Map) continue;
+      final noSpeech = (segment['no_speech_prob'] as num?)?.toDouble() ?? 0;
+      final logProb = (segment['avg_logprob'] as num?)?.toDouble() ?? 0;
+      final compression =
+          (segment['compression_ratio'] as num?)?.toDouble() ?? 1;
+      // The thresholds Whisper's own decoder uses to call a window silent
+      // or degenerate, applied after the fact.
+      if (noSpeech > 0.6 && logProb < -0.5) continue;
+      if (logProb < -1.0) continue;
+      if (compression > 2.4) continue;
+      final text = (segment['text'] ?? '').toString().trim();
+      if (text.isNotEmpty) kept.add(text);
+    }
+    return kept.join(' ').trim();
   }
 }

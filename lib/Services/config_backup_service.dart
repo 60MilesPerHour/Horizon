@@ -49,6 +49,11 @@ class ConfigBackupService {
     'whisper_backup_url',
     'tts_base_url',
     'tts_backup_url',
+    'live_base_url',
+    'live_backup_url',
+    'live_model',
+    'stt_backend',
+    'voice_engine',
   ];
 
   /// Read everything into a portable JSON string.

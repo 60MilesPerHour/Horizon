@@ -42,7 +42,7 @@ class ChatDrawer extends StatelessWidget {
                     ),
                     IconButton(
                       icon: const Icon(Icons.graphic_eq),
-                      tooltip: 'Voice mode',
+                      tooltip: 'Horizon Voice',
                       onPressed: () {
                         if (ResponsiveBreakpoints.of(context).isMobile) {
                           Navigator.pop(context);
