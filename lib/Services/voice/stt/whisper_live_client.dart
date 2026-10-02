@@ -114,6 +114,24 @@ class WhisperLiveClient {
   final StreamController<String> _errors = StreamController<String>.broadcast();
   Stream<String> get errors => _errors.stream;
 
+  /// Why the most recent [connect] failed, or null if it didn't. Kept so the
+  /// fallback notice can say *why* the turn was recorded instead — "no remote
+  /// address" and "Access refused the socket" are fixed in different places,
+  /// and both used to read as "unreachable".
+  String? lastError;
+
+  void _fail(String message) {
+    lastError = message;
+    _errors.add(message);
+  }
+
+  /// Added to a failure when there is no remote address: off the LAN the
+  /// local one can never answer, and that's the actual fix.
+  String get _noBackupHint => endpoint.backup.trim().isEmpty
+      ? ' No "Address from anywhere" is set for live transcription, so off '
+          'your network there is nothing else to try.'
+      : '';
+
   /// Completed segment text, in order, keyed by start time so a resent
   /// segment updates in place instead of being appended twice.
   final Map<double, String> _completed = {};
@@ -179,8 +197,9 @@ class WhisperLiveClient {
   /// audio. Returns false with a reason on [errors] if it never got there.
   Future<bool> connect({String? languageCode}) async {
     if (isConnected) return true;
+    lastError = null;
     if (!isConfigured) {
-      _errors.add('No live transcription server address is set.');
+      _fail('No live transcription server address is set.');
       return false;
     }
 
@@ -192,10 +211,19 @@ class WhisperLiveClient {
         _completed.clear();
         _tail = '';
 
-        final socket = await WebSocket.connect(
-          websocketUrl(base).toString(),
-          headers: endpoint.headersFor(base),
-        ).timeout(const Duration(seconds: 6));
+        final WebSocket socket;
+        try {
+          socket = await WebSocket.connect(
+            websocketUrl(base).toString(),
+            headers: endpoint.headersFor(base),
+          ).timeout(const Duration(seconds: 6));
+        } on WebSocketException catch (e) {
+          // Something answered over HTTP and refused to upgrade. Failover only
+          // advances on transport errors, so left as is this stopped at the
+          // first address — and off the LAN, a hotel network on the same
+          // private range or a captive portal can be what answers there.
+          throw _HandshakeRefused(e.message);
+        }
         _socket = socket;
         _messages = socket.listen(
           _onMessage,
@@ -233,16 +261,26 @@ class WhisperLiveClient {
         return true;
       });
     } on TimeoutException {
-      _errors.add('The live transcription server did not answer in time.');
+      _fail('The live transcription server did not answer in time.'
+          '$_noBackupHint');
+      return false;
+    } on _HandshakeRefused catch (e) {
+      // dart:io reports any non-101 handshake reply this way. Through a
+      // tunnel that is almost always Cloudflare Access turning the socket
+      // away (403) or a hostname with no route behind it.
+      _fail('The live transcription server refused the connection '
+          '(${e.message}). Through a tunnel this usually means Cloudflare '
+          'Access rejected the service token, or the hostname has no route.');
       return false;
     } on SocketException catch (e) {
-      _errors.add('Could not reach the live transcription server: ${e.message}');
+      _fail('Could not reach the live transcription server: ${e.message}.'
+          '$_noBackupHint');
       return false;
     } on WebSocketException catch (e) {
-      _errors.add('Could not open a live transcription session: ${e.message}');
+      _fail('Could not open a live transcription session: ${e.message}');
       return false;
     } catch (e) {
-      _errors.add('Live transcription failed to start: $e');
+      _fail('Live transcription failed to start: $e');
       return false;
     }
   }
@@ -429,4 +467,11 @@ class WhisperLiveClient {
     }
     _tail = tail;
   }
+}
+
+/// A WebSocket handshake answered with something other than 101. A
+/// [SocketException] so [RemoteEndpoint.withFailover] moves on to the next
+/// address instead of giving up on the first.
+class _HandshakeRefused extends SocketException {
+  const _HandshakeRefused(super.message);
 }

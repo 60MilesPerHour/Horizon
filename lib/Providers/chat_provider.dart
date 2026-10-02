@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -1158,8 +1160,19 @@ class ChatProvider extends ChangeNotifier {
   /// chat row and inserts every message under it (the import always mints a
   /// new chat ID so we can never collide with an existing chat). On success
   /// the imported chat is opened.
-  Future<OllamaChat> importChatFromString(String content) async {
-    final parsed = ChatExportService().parseImport(content);
+  Future<OllamaChat> importChatFromString(String content) =>
+      _importParsed(ChatExportService().parseImport(content));
+
+  /// Restore a chat from raw file bytes: a Reins `.reins` zip archive, or
+  /// a Markdown/text export.
+  Future<OllamaChat> importChatFromBytes(Uint8List bytes) {
+    final service = ChatExportService();
+    return _importParsed(ChatExportService.isZip(bytes)
+        ? service.parseReinsArchive(bytes)
+        : service.parseImport(utf8.decode(bytes, allowMalformed: true)));
+  }
+
+  Future<OllamaChat> _importParsed(ImportedChat parsed) async {
 
     // Step 1 — create the chat row with the imported model/provider.
     final chat = await _databaseService.createChat(

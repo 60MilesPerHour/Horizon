@@ -268,7 +268,7 @@ class SpeechInputService {
         if (whisper.isConfigured) {
           lastFallbackReason =
               'The live transcription server was unreachable — recorded the '
-              'turn and transcribed it instead.';
+              'turn and transcribed it instead.${_liveWhy()}';
           await _listenRemote(
             SttBackend.whisper,
             onResult: onResult,
@@ -312,7 +312,7 @@ class SpeechInputService {
         }
         lastFallbackReason = result.serverLost
             ? 'The live transcription server was unreachable — transcribed '
-                'the recording instead.'
+                'the recording instead.${_liveWhy()}'
             : 'The live transcript came back empty — transcribed the '
                 'recording instead.';
         final recovered = await _transcribeCapturedTurn(audio);
@@ -327,6 +327,13 @@ class SpeechInputService {
         );
         return;
     }
+  }
+
+  /// The live client's own account of its last failure, as a sentence to
+  /// append to a fallback notice.
+  String _liveWhy() {
+    final why = streaming?.client.lastError;
+    return why == null ? '' : ' $why';
   }
 
   /// Gets the accurate-pass model loaded before the first turn needs it.

@@ -32,6 +32,36 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.5.0 — 2026-10-02
+
+**Bring your Reins chats with you.** Import a chat (⋯ → Import a chat) now
+reads both things Reins exports: its `.reins` files — title, model, system
+prompt, chat settings and every message with the time it was really sent —
+and its Markdown transcripts, which carry no per-message times, so their
+messages are given ones a second apart to keep the order. Checked against
+real exports from both. [Moving over from Reins](docs/MIGRATING_FROM_REINS.md)
+is a new guide to what you need (an Ollama address), what's optional, and
+where things moved.
+
+- The import picker shows every file, then turns away anything that isn't
+  `.md`, `.txt` or `.reins`: Android has no type for `.reins`, so filtering
+  in the picker greyed those files out.
+- Windows line endings no longer trip the Markdown import.
+
+**Live transcription says why it fell back.** Away from home, a live server
+that couldn't be reached used to look the same whatever the cause, and the
+turn quietly became a whole recording uploaded after you stopped. The notice
+now names it: no "Address from anywhere" set, or the server refusing the
+connection (through a tunnel, usually Cloudflare Access).
+
+- A home address that answers but won't open the socket — a hotel network
+  on the same private range, a sign-in page — now moves on to the remote
+  address instead of giving up there.
+- Saving a Cloudflare Access token reaches live transcription at once, as it
+  already did chat and the other voice servers, instead of after a restart.
+
+---
+
 ## v4.4.1 — 2026-09-26
 
 **The title font stays the title font.** Pacifico — the "Horizon" wordmark,

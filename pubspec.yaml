@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 4.4.1+60
+version: 4.5.0+61
 
 environment:
   sdk: ^3.12.0
@@ -100,6 +100,9 @@ dependencies:
 
   # File picker for chat import and document attachments
   file_picker: ^8.1.4
+
+  # Unzips Reins' .reins chat archives on import
+  archive: ^4.0.4
 
   # Text extraction from attached PDFs. Pure Dart — no native library, so the
   # same code path works on Android, macOS, Windows and Linux without touching

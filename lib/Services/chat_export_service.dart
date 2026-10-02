@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_message.dart';
 
@@ -118,7 +120,12 @@ class ChatExportService {
   /// construct a reasonable placeholder chat (provider: ollama, model: empty)
   /// so the user can fix it up in Configure Chat after import.
   ImportedChat parseImport(String content) {
+    // Normalise line endings so every regex below can assume `\n`.
+    content = content.replaceAll('\r\n', '\n');
     final metadata = _extractMetadata(content);
+    if (metadata.isEmpty && _looksLikeReinsExport(content)) {
+      return _parseReinsExport(content);
+    }
     final body = _stripMetadataBlock(content);
 
     final chat = OllamaChat(
@@ -136,6 +143,172 @@ class ChatExportService {
 
     final messages = _parseMessages(body);
     return ImportedChat(chat: chat, messages: messages);
+  }
+
+  // ---------- Reins import ----------
+
+  static final _reinsRoleRegex = RegExp(
+    r'^\*\*(User|Assistant|System)\*\*[ \t]*$',
+    multiLine: true,
+  );
+  static final _reinsModelRegex = RegExp(
+    r'^Model:\s*(.+?)\s*·\s*Exported:\s*(.+?)\s*$',
+    multiLine: true,
+  );
+
+  /// Reins' Markdown export has no metadata block — just a `# Title`, a
+  /// `Model: x · Exported: <date> · <time>` line, then `**User**` /
+  /// `**Assistant**` blocks separated by `---` rules. No per-message
+  /// timestamps.
+  bool _looksLikeReinsExport(String content) =>
+      _reinsModelRegex.hasMatch(content) && _reinsRoleRegex.hasMatch(content);
+
+  ImportedChat _parseReinsExport(String content) {
+    final title = RegExp(r'^#\s+(.+?)\s*$', multiLine: true)
+        .firstMatch(content)
+        ?.group(1);
+    final modelMatch = _reinsModelRegex.firstMatch(content);
+    final model = modelMatch?.group(1) ?? '';
+    final exportedAt =
+        _tryParseReinsDate(modelMatch?.group(2)) ?? DateTime.now();
+
+    // A role marker only counts when it opens the body or follows a `---`
+    // rule, so a message that happens to contain a bare `**User**` line
+    // doesn't get split in two.
+    final searchFrom = modelMatch?.end ?? 0;
+    final markers = _reinsRoleRegex.allMatches(content, searchFrom).where((m) {
+      final before = content.substring(searchFrom, m.start).trimRight();
+      return before.isEmpty || before.endsWith('\n---') || before == '---';
+    }).toList();
+
+    final messages = <OllamaMessage>[];
+    String? systemPrompt;
+    for (int i = 0; i < markers.length; i++) {
+      final end = i + 1 < markers.length ? markers[i + 1].start : content.length;
+      final raw = content
+          .substring(markers[i].end, end)
+          .trim()
+          .replaceFirst(RegExp(r'\n*---$'), '')
+          .trim();
+      if (raw.isEmpty) continue;
+
+      final role = _roleFromLabel(markers[i].group(1)!.toLowerCase());
+      if (role == OllamaMessageRole.system) {
+        systemPrompt ??= raw;
+        continue;
+      }
+      // Messages are ordered by timestamp, so give each a distinct one
+      // counting back from the export time.
+      messages.add(OllamaMessage(raw, role: role, createdAt: exportedAt));
+    }
+    for (int i = 0; i < messages.length; i++) {
+      messages[i].createdAt =
+          exportedAt.subtract(Duration(seconds: messages.length - i));
+    }
+
+    return ImportedChat(
+      chat: OllamaChat(
+        title: title ?? 'Imported chat',
+        model: model,
+        systemPrompt: systemPrompt,
+        provider: 'ollama',
+      ),
+      messages: messages,
+    );
+  }
+
+  /// True when [bytes] start with a zip signature — how a `.reins` archive
+  /// is told apart from a Markdown/text export.
+  static bool isZip(Uint8List bytes) =>
+      bytes.length >= 4 &&
+      bytes[0] == 0x50 &&
+      bytes[1] == 0x4B &&
+      bytes[2] == 0x03 &&
+      bytes[3] == 0x04;
+
+  /// Parse a Reins `.reins` archive: a zip holding a single `chat.json` of
+  /// `{version, exportedAt, chat: {model, chat_title, system_prompt,
+  /// options}, messages: [{role, content, timestamp}]}`. `options` is a JSON
+  /// string, and `timestamp` is epoch milliseconds.
+  ImportedChat parseReinsArchive(Uint8List bytes) {
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final entry = archive.files.firstWhere(
+      (f) => f.isFile && f.name.split('/').last == 'chat.json',
+      orElse: () => throw const FormatException('No chat.json in .reins file'),
+    );
+    final root = json.decode(utf8.decode(entry.content as List<int>));
+    if (root is! Map<String, dynamic>) {
+      throw const FormatException('Malformed chat.json');
+    }
+
+    final chatMap = (root['chat'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final rawOptions = chatMap['options'];
+    final options = switch (rawOptions) {
+      String s when s.isNotEmpty => _safeJson(s),
+      Map m => m.cast<String, dynamic>(),
+      _ => const <String, dynamic>{},
+    };
+    final exportedAt =
+        DateTime.tryParse(root['exportedAt'] as String? ?? '') ?? DateTime.now();
+
+    final messages = <OllamaMessage>[];
+    String? systemPrompt = chatMap['system_prompt'] as String?;
+    for (final raw in (root['messages'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final content = raw['content'] as String? ?? '';
+      if (content.trim().isEmpty) continue;
+      final role = _roleFromLabel((raw['role'] as String? ?? '').toLowerCase());
+      if (role == OllamaMessageRole.system) {
+        systemPrompt ??= content;
+        continue;
+      }
+      final ts = raw['timestamp'];
+      messages.add(OllamaMessage(
+        content,
+        role: role,
+        createdAt: ts is int
+            ? DateTime.fromMillisecondsSinceEpoch(ts)
+            : exportedAt.add(Duration(milliseconds: messages.length)),
+      ));
+    }
+
+    return ImportedChat(
+      chat: OllamaChat(
+        title: (chatMap['chat_title'] as String?) ?? 'Imported chat',
+        model: (chatMap['model'] as String?) ?? '',
+        systemPrompt:
+            (systemPrompt?.isEmpty ?? true) ? null : systemPrompt,
+        provider: 'ollama',
+        options: options.isEmpty ? null : OllamaChatOptions.fromMap(options),
+      ),
+      messages: messages,
+    );
+  }
+
+  /// "October 1, 2026 · 9:27 AM" → local DateTime.
+  DateTime? _tryParseReinsDate(String? raw) {
+    if (raw == null) return null;
+    final m = RegExp(
+      r'^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})(?:\s*·\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])?)?',
+    ).firstMatch(raw.trim());
+    if (m == null) return null;
+    const months = [
+      'january', 'february', 'march', 'april', 'may', 'june', 'july',
+      'august', 'september', 'october', 'november', 'december',
+    ];
+    final month = months.indexOf(m.group(1)!.toLowerCase()) + 1;
+    if (month == 0) return null;
+    var hour = int.tryParse(m.group(4) ?? '') ?? 0;
+    final ampm = m.group(6)?.toLowerCase();
+    if (ampm == 'pm' && hour < 12) hour += 12;
+    if (ampm == 'am' && hour == 12) hour = 0;
+    return DateTime(
+      int.parse(m.group(3)!),
+      month,
+      int.parse(m.group(2)!),
+      hour,
+      int.tryParse(m.group(5) ?? '') ?? 0,
+    );
   }
 
   // ---------- Internals ----------

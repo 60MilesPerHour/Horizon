@@ -62,6 +62,8 @@ Any reply in any chat can be read aloud from its menu, too.
 3. **Home Assistant** *(optional)*. Settings → Home Assistant → your instance URL and a long-lived access token. "Test connection" tells you which one is wrong.
 4. **Voice** *(optional)*. Settings → Voice. For live transcription, run a WhisperLive server and enter its address under Live; add a Whisper-compatible server (such as Speaches) under Accuracy pass. Choose how replies are spoken — the device's own voice, a self-hosted one, or ElevenLabs — and turn on "Hey Horizon" if you want it.
 
+Coming from Reins? [Moving over from Reins](docs/MIGRATING_FROM_REINS.md) covers what's needed, what's optional, and importing your `.reins` files and transcripts.
+
 ### Running the voice servers
 
 Live transcription is [WhisperLive](https://github.com/collabora/WhisperLive) on a GPU:

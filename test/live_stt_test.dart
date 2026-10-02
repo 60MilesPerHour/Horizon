@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -228,6 +230,64 @@ void sharedHostnameTests() {
             .toString(),
         'ws://172.16.23.20:8001/live',
       );
+    });
+  });
+
+  group('WhisperLive connect failover', () {
+    final servers = <HttpServer>[];
+    tearDown(() async {
+      for (final server in servers) {
+        await server.close(force: true);
+      }
+      servers.clear();
+    });
+
+    Future<String> serve(void Function(HttpRequest) handler) async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      servers.add(server);
+      server.listen(handler);
+      return 'http://127.0.0.1:${server.port}';
+    }
+
+    test('a refused handshake moves on to the remote address', () async {
+      // What a hotel network on the same private range, a captive portal or
+      // Access does: answer over HTTP instead of upgrading.
+      final refusing = await serve((req) {
+        req.response.statusCode = HttpStatus.forbidden;
+        req.response.close();
+      });
+      final live = await serve((req) async {
+        final socket = await WebSocketTransformer.upgrade(req);
+        socket.listen((frame) {
+          if (frame is String) {
+            final uid = json.decode(frame)['uid'];
+            socket.add(json.encode({'uid': uid, 'message': 'SERVER_READY'}));
+          }
+        });
+      });
+
+      final client = WhisperLiveClient(baseUrl: refusing, backupUrl: live);
+      expect(await client.connect(), isTrue);
+      expect(client.isOnBackup, isTrue);
+      expect(client.lastError, isNull);
+      await client.dispose();
+    });
+
+    test('a failure off the LAN with no remote address says so', () async {
+      final refusing = await serve((req) {
+        req.response.statusCode = HttpStatus.forbidden;
+        req.response.close();
+      });
+      final client = WhisperLiveClient(baseUrl: refusing);
+      expect(await client.connect(), isFalse);
+      expect(client.lastError, contains('refused'));
+      await client.dispose();
+
+      // Nothing listening: a transport failure, with the missing backup named.
+      final dead = WhisperLiveClient(baseUrl: 'http://127.0.0.1:1');
+      expect(await dead.connect(), isFalse);
+      expect(dead.lastError, contains('Address from anywhere'));
+      await dead.dispose();
     });
   });
 }

@@ -11,6 +11,7 @@ import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
+import 'package:horizon/Services/voice/stt/whisper_live_client.dart';
 import 'package:horizon/Services/voice/stt/whisper_transcriber.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
 import 'package:horizon/Widgets/ollama_bottom_sheet_header.dart';
@@ -559,6 +560,14 @@ class _CloudflareAccessFieldsState extends State<_CloudflareAccessFields> {
     final id = _idController.text.trim();
     final secret = _secretController.text.trim();
     final service = context.read<OllamaService>();
+    // One tunnel, one token: the voice backends point at the same Access
+    // policy, and making them wait for a restart to notice a token the user
+    // just typed is the kind of gap that reads as "it didn't save".
+    final voiceEndpoints = [
+      context.read<WhisperTranscriber>().endpoint,
+      context.read<WhisperLiveClient>().endpoint,
+      context.read<SpeechSynthesisService>().selfHosted,
+    ];
 
     Future<void> put(String key, String value) async {
       try {
@@ -574,13 +583,7 @@ class _CloudflareAccessFieldsState extends State<_CloudflareAccessFields> {
     await put('cf_access_client_secret', secret);
     service.cfAccessClientId = id;
     service.cfAccessClientSecret = secret;
-    // One tunnel, one token: the voice backends point at the same Access
-    // policy, and making them wait for a restart to notice a token the user
-    // just typed is the kind of gap that reads as "it didn't save".
-    for (final endpoint in [
-      context.read<WhisperTranscriber>().endpoint,
-      context.read<SpeechSynthesisService>().selfHosted,
-    ]) {
+    for (final endpoint in voiceEndpoints) {
       endpoint.cfAccessClientId = id;
       endpoint.cfAccessClientSecret = secret;
       endpoint.reset();
