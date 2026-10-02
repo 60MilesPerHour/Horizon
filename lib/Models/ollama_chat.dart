@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:uuid/uuid.dart';
 
 class OllamaChat {
@@ -9,7 +8,8 @@ class OllamaChat {
   final String? systemPrompt;
   final OllamaChatOptions options;
 
-  /// Backing provider for this chat: 'ollama' (default) or 'openrouter'.
+  /// Backing provider for this chat: 'ollama' (default), 'openrouter', or a
+  /// direct client — 'anthropic', 'openai', 'google'.
   final String provider;
 
   /// For a chat that predates v4.0.0 and was migrated off a direct cloud
@@ -54,27 +54,22 @@ class OllamaChat {
     final model = map['model'] as String? ?? '';
     final storedProvider = map['provider'] as String?;
 
-    // Schema v5 rewrote every stored row off the retired direct clients, so
-    // this normally finds nothing. It still runs on every load because a chat
-    // IMPORTED from a v3 export file never passes through a migration, and
-    // would otherwise arrive bound to a provider the app no longer has.
-    final migrated = OpenRouterMigration.migrate(
-      provider: storedProvider,
-      model: model,
-    );
-
+    // No remapping here. Until v4.6.0 this moved any anthropic/openai/google
+    // row onto OpenRouter on every load, which was right while those clients
+    // didn't exist and would now silently move every new direct chat. The
+    // one-time schema v5 migration covers stored rows; imports are handled in
+    // ChatProvider, where it can tell whether the direct client is set up.
     return OllamaChat(
       id: map['chat_id'],
-      model: migrated?.model ?? model,
+      model: model,
       title: map['chat_title'],
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
-      provider: migrated == null ? (storedProvider ?? 'ollama') : 'openrouter',
+      provider: storedProvider ?? 'ollama',
       parentChatId: map['parent_chat_id'] as String?,
       branchPointMessageId: map['branch_point_message_id'] as String?,
-      legacyProvider:
-          map['legacy_provider'] as String? ?? migrated?.legacyProvider,
-      legacyModel: map['legacy_model'] as String? ?? migrated?.legacyModel,
+      legacyProvider: map['legacy_provider'] as String?,
+      legacyModel: map['legacy_model'] as String?,
     );
   }
 }

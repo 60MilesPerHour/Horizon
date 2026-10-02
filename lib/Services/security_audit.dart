@@ -66,6 +66,23 @@ class EgressEntry {
   bool get isActive => status == EgressStatus.active;
 }
 
+/// One direct cloud client (Anthropic, OpenAI, Google) as the audit sees it.
+class DirectProviderAudit {
+  const DirectProviderAudit({
+    required this.name,
+    required this.host,
+    required this.enabled,
+    required this.hasKey,
+  });
+
+  final String name;
+
+  /// The API host requests go to — for OpenAI, whatever base URL is set.
+  final String host;
+  final bool enabled;
+  final bool hasKey;
+}
+
 /// Everything the audit needs, as plain values rather than services, so the
 /// classification can be tested without constructing half the app.
 class SecurityAuditInputs {
@@ -89,6 +106,7 @@ class SecurityAuditInputs {
     required this.homeAssistantConfigured,
     required this.sharedChatCount,
     required this.sharedCloudChatCount,
+    this.directProviders = const [],
   });
 
   final String ollamaAddress;
@@ -123,6 +141,10 @@ class SecurityAuditInputs {
   /// How many of those run on a hosted model, and are therefore the only ones
   /// a hosted chat is allowed to search.
   final int sharedCloudChatCount;
+
+  /// The direct cloud clients. Listed only once one has a key or is switched
+  /// on, so the page doesn't fill up with three providers nobody uses.
+  final List<DirectProviderAudit> directProviders;
 }
 
 /// Builds the "what goes where" list for the Security & Privacy page.
@@ -272,6 +294,26 @@ class SecurityAudit {
           "company sees the conversation too, under OpenRouter's terms with "
           'them, not yours.',
     ));
+
+    // ---------------- Direct cloud providers ----------------
+    for (final direct in input.directProviders) {
+      if (!direct.hasKey && !direct.enabled) continue;
+      entries.add(EgressEntry(
+        name: direct.name,
+        host: direct.host,
+        trust: EgressTrust.thirdParty,
+        status: direct.enabled && direct.hasKey
+            ? EgressStatus.active
+            : (direct.hasKey
+                ? EgressStatus.inactive
+                : EgressStatus.unconfigured),
+        sends: 'The full conversation for any chat using one of its models, '
+            'including images and attachment text.',
+        credential: direct.hasKey ? 'API key in the keystore' : null,
+        note: 'Sent straight to the company that makes the model, under your '
+            'own account and its terms. No one in between.',
+      ));
+    }
 
     // ---------------- Web search ----------------
     entries.add(EgressEntry(

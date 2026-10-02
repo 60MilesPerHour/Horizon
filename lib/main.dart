@@ -109,6 +109,10 @@ void main() async {
   String? whisperKey;
   String? ttsKey;
   String? haToken;
+  String? claudeKey;
+  String? openaiKey;
+  String? openaiBaseUrl;
+  String? geminiKey;
   try {
     const storage = FlutterSecureStorage();
     ollamaToken = await storage.read(key: 'ollama_api_token');
@@ -120,6 +124,10 @@ void main() async {
     whisperKey = await storage.read(key: 'whisper_api_key');
     ttsKey = await storage.read(key: 'tts_api_key');
     haToken = await storage.read(key: 'ha_token');
+    claudeKey = await storage.read(key: 'anthropic_api_key');
+    openaiKey = await storage.read(key: 'openai_api_key');
+    openaiBaseUrl = await storage.read(key: 'openai_base_url');
+    geminiKey = await storage.read(key: 'google_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -142,6 +150,17 @@ void main() async {
     'enable_openrouter',
     defaultValue: openrouterKey != null && openrouterKey.isNotEmpty,
   ) as bool;
+  // The direct clients are the advanced path, so each stays off until it's
+  // switched on in Settings, whatever key is stored. New keys, not v3's
+  // `enable_anthropic` and friends: those were never cleared, and reusing
+  // them would quietly switch a provider back on for anyone who had it on in
+  // v3, with a key they may have forgotten was there.
+  final claudeEnabled =
+      settingsBox.get('enable_direct_anthropic', defaultValue: false) as bool;
+  final openaiEnabled =
+      settingsBox.get('enable_direct_openai', defaultValue: false) as bool;
+  final geminiEnabled =
+      settingsBox.get('enable_direct_google', defaultValue: false) as bool;
 
   final ollamaService = OllamaService(
     apiToken: ollamaToken,
@@ -152,9 +171,21 @@ void main() async {
     apiKey: openrouterKey,
     enabled: openrouterEnabled,
   );
+  final claudeService =
+      ClaudeService(apiKey: claudeKey, enabled: claudeEnabled);
+  final openaiService = OpenAIService(
+    apiKey: openaiKey,
+    baseUrl: openaiBaseUrl,
+    enabled: openaiEnabled,
+  );
+  final geminiService =
+      GeminiService(apiKey: geminiKey, enabled: geminiEnabled);
   final registry = ChatServiceRegistry(
     ollama: ollamaService,
     openrouter: openrouterService,
+    claude: claudeService,
+    openai: openaiService,
+    gemini: geminiService,
   );
 
   // Home Assistant: the instance URL is ordinary config, the long-lived token
@@ -251,6 +282,9 @@ void main() async {
         ChangeNotifierProvider(create: (_) => AppearanceController()),
         Provider(create: (_) => ollamaService),
         Provider(create: (_) => openrouterService),
+        Provider(create: (_) => claudeService),
+        Provider(create: (_) => openaiService),
+        Provider(create: (_) => geminiService),
         Provider(create: (_) => registry),
         Provider(create: (_) => webSearchService),
         Provider(create: (_) => homeAssistantService),

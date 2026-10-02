@@ -57,7 +57,7 @@ Any reply in any chat can be read aloud from its menu, too.
 
 ## Set up
 
-1. **A model.** Settings → Ollama Server → your server's address (`http://<host>:11434`), plus an optional backup address for when you're away from home. For Ollama Cloud, use `https://ollama.com` and your `olc-…` token. And/or Settings → Cloud Models → an OpenRouter key.
+1. **A model.** Settings → Ollama Server → your server's address (`http://<host>:11434`), plus an optional backup address for when you're away from home. For Ollama Cloud, use `https://ollama.com` and your `olc-…` token. And/or Settings → Cloud Models → an OpenRouter key, or your own Anthropic, OpenAI or Google key under Direct provider keys.
 2. **Tools** *(optional)*. Settings → Tools & Web Search → a SearXNG address or a SerpAPI key. Reading pages and checking the time work without either.
 3. **Home Assistant** *(optional)*. Settings → Home Assistant → your instance URL and a long-lived access token. "Test connection" tells you which one is wrong.
 4. **Voice** *(optional)*. Settings → Voice. For live transcription, run a WhisperLive server and enter its address under Live; add a Whisper-compatible server (such as Speaches) under Accuracy pass. Choose how replies are spoken — the device's own voice, a self-hosted one, or ElevenLabs — and turn on "Hey Horizon" if you want it.

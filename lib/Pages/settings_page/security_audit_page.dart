@@ -4,8 +4,11 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/chat_history_search.dart';
+import 'package:horizon/Services/claude_service.dart';
+import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/home_assistant_service.dart';
 import 'package:horizon/Pages/settings_page/outbound_log_page.dart';
+import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 import 'package:horizon/Services/security_audit.dart';
 import 'package:horizon/Services/web_search_service.dart';
@@ -55,6 +58,9 @@ class _SecurityAuditPageState extends State<SecurityAuditPage> {
     final webSearch = context.read<WebSearchService>();
     final homeAssistant = context.read<HomeAssistantService>();
     final chatSearch = context.read<ChatHistorySearch>();
+    final claude = context.read<ClaudeService>();
+    final openai = context.read<OpenAIService>();
+    final gemini = context.read<GeminiService>();
 
     final entries = SecurityAudit.build(SecurityAuditInputs(
       ollamaAddress: (box.get('serverAddress') as String?) ?? '',
@@ -78,6 +84,26 @@ class _SecurityAuditPageState extends State<SecurityAuditPage> {
       sharedCloudChatCount: chatSearch.bridgedChats
           .where((chat) => !ChatHistorySearch.isLocalProvider(chat.provider))
           .length,
+      directProviders: [
+        DirectProviderAudit(
+          name: 'Anthropic (direct)',
+          host: 'api.anthropic.com',
+          enabled: claude.enabled,
+          hasKey: await _hasSecret('anthropic_api_key'),
+        ),
+        DirectProviderAudit(
+          name: 'OpenAI (direct)',
+          host: SecurityAudit.hostOf(openai.baseUrl) ?? 'api.openai.com',
+          enabled: openai.enabled,
+          hasKey: await _hasSecret('openai_api_key'),
+        ),
+        DirectProviderAudit(
+          name: 'Google Gemini (direct)',
+          host: 'generativelanguage.googleapis.com',
+          enabled: gemini.enabled,
+          hasKey: await _hasSecret('google_api_key'),
+        ),
+      ],
     ));
 
     if (mounted) setState(() => _entries = entries);

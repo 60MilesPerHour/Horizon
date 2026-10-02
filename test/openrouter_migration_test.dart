@@ -170,20 +170,20 @@ void main() {
   });
 
   group('OllamaChat.fromMap', () {
-    test('migrates an imported v3 chat that never saw the DB upgrade', () {
-      // Chat import goes straight from an export file to an OllamaChat, so
-      // this is the only place a retired provider id can still arrive.
+    test('a direct-provider chat stays on its provider', () {
+      // The direct clients are back, so a row on one is a chat someone made
+      // with their own key, not a leftover to move. Remapping here moved every
+      // new Claude chat to OpenRouter the next time it loaded.
       final chat = OllamaChat.fromMap({
         'chat_id': 'c1',
-        'model': 'claude-3-7-sonnet-20250219',
-        'chat_title': 'Old Claude chat',
+        'model': 'claude-sonnet-4-5-20250929',
+        'chat_title': 'Direct Claude chat',
         'provider': 'anthropic',
       });
 
-      expect(chat.provider, 'openrouter');
-      expect(chat.model, 'anthropic/claude-3.7-sonnet');
-      expect(chat.wasMigrated, isTrue);
-      expect(chat.legacyModel, 'claude-3-7-sonnet-20250219');
+      expect(chat.provider, 'anthropic');
+      expect(chat.model, 'claude-sonnet-4-5-20250929');
+      expect(chat.wasMigrated, isFalse);
     });
 
     test('keeps the stored legacy columns for an already-migrated row', () {
@@ -211,6 +211,41 @@ void main() {
 
       expect(chat.provider, 'ollama');
       expect(chat.wasMigrated, isFalse);
+    });
+  });
+
+  group('OpenRouterMigration.forImport', () {
+    test('a v3 export moves to OpenRouter when the direct client is not set up',
+        () {
+      final target = OpenRouterMigration.forImport(
+        provider: 'anthropic',
+        model: 'claude-3-7-sonnet-20250219',
+        directConfigured: false,
+      );
+      expect(target.provider, 'openrouter');
+      expect(target.model, 'anthropic/claude-3.7-sonnet');
+    });
+
+    test('and stays direct when it is', () {
+      final target = OpenRouterMigration.forImport(
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+        directConfigured: true,
+      );
+      expect(target.provider, 'google');
+      expect(target.model, 'gemini-2.5-pro');
+    });
+
+    test('Ollama and OpenRouter chats are left alone', () {
+      for (final provider in ['ollama', 'openrouter']) {
+        final target = OpenRouterMigration.forImport(
+          provider: provider,
+          model: 'qwen3.6:27b',
+          directConfigured: false,
+        );
+        expect(target.provider, provider);
+        expect(target.model, 'qwen3.6:27b');
+      }
     });
   });
 }

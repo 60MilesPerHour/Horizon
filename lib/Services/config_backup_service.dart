@@ -26,6 +26,10 @@ class ConfigBackupService {
   /// Secure-storage keys holding secrets. Order is display order.
   static const List<String> _secureKeys = [
     'openrouter_api_key',
+    'anthropic_api_key',
+    'openai_api_key',
+    'openai_base_url',
+    'google_api_key',
     'ollama_api_token',
     'cf_access_client_id',
     'cf_access_client_secret',
@@ -40,6 +44,9 @@ class ConfigBackupService {
     'serverAddressBackup',
     'serverUseBackup',
     'enable_openrouter',
+    'enable_direct_anthropic',
+    'enable_direct_openai',
+    'enable_direct_google',
     'web_search_backend',
     'searxng_url',
     'ha_base_url',

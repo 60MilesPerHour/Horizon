@@ -274,11 +274,17 @@ class _GroupedModelList extends StatelessWidget {
   static const _providerLabels = {
     'ollama': 'Ollama',
     'openrouter': 'OpenRouter',
+    'anthropic': 'Claude',
+    'openai': 'OpenAI',
+    'google': 'Gemini',
   };
 
   static const _providerOrder = [
     'ollama',
     'openrouter',
+    'anthropic',
+    'openai',
+    'google',
   ];
 
   @override

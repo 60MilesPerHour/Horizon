@@ -32,6 +32,30 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.6.0 — 2026-10-02
+
+**Your own Anthropic, OpenAI or Google key, if you'd rather.** Settings →
+Cloud Models has a Direct provider keys section under the OpenRouter key:
+Claude, OpenAI and Gemini, each talking to its company's API with no one in
+between. OpenRouter is still the one-key way to every hosted model; these are
+for anyone who already pays one of them directly or doesn't want a middleman.
+The OpenAI key takes a base URL, which makes any OpenAI-compatible server a
+provider again.
+
+- Each is off until you add a key. Pasting one switches it on, and a key is
+  kept even if you close Settings without pressing save.
+- Their models appear in the picker under Claude, OpenAI and Gemini.
+- Security & Privacy lists each one you've set up, with where it sends the
+  conversation.
+- Keys still in your keystore from before v4.0.0 are picked up again, but
+  every provider stays off until you switch it on.
+- Configuration backups carry the keys and switches again.
+- Chats moved to OpenRouter in v4.0.0 stay there. Importing a chat exported
+  from v3 keeps its direct provider when that provider is set up, and moves it
+  to OpenRouter when it isn't.
+
+---
+
 ## v4.5.0 — 2026-10-02
 
 **Bring your Reins chats with you.** Import a chat (⋯ → Import a chat) now

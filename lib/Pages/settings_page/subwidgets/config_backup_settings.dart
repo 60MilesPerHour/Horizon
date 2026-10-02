@@ -5,10 +5,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/config_backup_service.dart';
+import 'package:horizon/Services/gemini_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
+import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 
 /// Export / import of API keys and server settings, so a fresh install (or a
@@ -84,6 +88,9 @@ class ConfigBackupSettings extends StatelessWidget {
     // context after the file picker / async writes.
     final openrouter = context.read<OpenRouterService>();
     final ollama = context.read<OllamaService>();
+    final claude = context.read<ClaudeService>();
+    final openai = context.read<OpenAIService>();
+    final gemini = context.read<GeminiService>();
 
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -126,9 +133,26 @@ class ConfigBackupSettings extends StatelessWidget {
         // restore, so turn it on when there's a key to use.
         if (key.isNotEmpty) openrouter.enabled = true;
       }
-      // A backup written by v3.x also carries anthropic/openai/google keys.
-      // They're ignored rather than restored: nothing reads them since the
-      // direct clients were removed in v4.0.0.
+      if (p.containsKey('anthropic_api_key')) {
+        claude.apiKey = p['anthropic_api_key']!;
+      }
+      if (p.containsKey('openai_api_key')) {
+        openai.apiKey = p['openai_api_key']!;
+      }
+      if (p.containsKey('openai_base_url')) {
+        final base = p['openai_base_url']!;
+        openai.baseUrl = base.isEmpty ? null : base;
+      }
+      if (p.containsKey('google_api_key')) {
+        gemini.apiKey = p['google_api_key']!;
+      }
+      // Their switches came back in the settings block; the running services
+      // read them only at launch.
+      final settings = Hive.box('settings');
+      claude.enabled =
+          settings.get('enable_direct_anthropic', defaultValue: false) as bool;
+      openai.enabled = settings.get('enable_direct_openai', defaultValue: false) as bool;
+      gemini.enabled = settings.get('enable_direct_google', defaultValue: false) as bool;
       if (p.containsKey('ollama_api_token')) {
         ollama.apiToken = p['ollama_api_token']!;
       }

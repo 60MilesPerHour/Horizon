@@ -49,7 +49,7 @@ you want them.
 |---|---|---|
 | **Use it away from home** | Settings → Ollama Server → backup address | A second address that reaches your server from outside: a Tailscale/ZeroTier IP, or a tunnel hostname. Horizon fails over to it on its own. |
 | **Cloudflare Access** | Settings → Ollama Server | A service token (Client ID + Secret), if your tunnel is behind Access. The same token is used for every server Horizon talks to. |
-| **Hosted models** (Claude, GPT, Gemini, …) | Settings → **Cloud Models** | An [OpenRouter](https://openrouter.ai) key. One key covers hundreds of models. |
+| **Hosted models** (Claude, GPT, Gemini, …) | Settings → **Cloud Models** | An [OpenRouter](https://openrouter.ai) key, which covers hundreds of models. Or, under **Direct provider keys**, your own Anthropic, OpenAI or Google key. The OpenAI one also takes a base URL for any OpenAI-compatible server. |
 | **Web search** | Settings → **Tools & Web Search** | A SearXNG address or a SerpAPI key. Reading web pages and telling the time work without either. |
 | **Home Assistant** | Settings → **Home Assistant** | Your instance URL and a long-lived access token. |
 | **Voice** | Settings → **Voice** | Works out of the box with your phone's own speech recognition and voice. For live transcription and better accuracy, run your own servers. See [Running the voice servers](../README.md#running-the-voice-servers). |

@@ -127,6 +127,24 @@ class OpenRouterMigration {
       legacyModel: model,
     );
   }
+
+  /// Where an imported chat should land.
+  ///
+  /// A chat exported from v3 can name a direct provider. It stays there when
+  /// that client is set up ([directConfigured]); otherwise it moves to
+  /// OpenRouter the way the schema v5 migration moved stored chats, rather
+  /// than arriving on a provider that can't send.
+  static ({String provider, String model}) forImport({
+    required String provider,
+    required String model,
+    required bool directConfigured,
+  }) {
+    if (!retiredProviders.containsKey(provider) || directConfigured) {
+      return (provider: provider, model: model);
+    }
+    final migrated = migrate(provider: provider, model: model);
+    return (provider: 'openrouter', model: migrated?.model ?? model);
+  }
 }
 
 /// A chat's model after migration, plus what it was before.

@@ -12,7 +12,8 @@ class OllamaModel {
   final String parameterSize;
   final ModelCapabilities? capabilities;
 
-  /// Provider id this model belongs to: 'ollama' or 'openrouter'.
+  /// Provider id this model belongs to: 'ollama', 'openrouter', 'anthropic',
+  /// 'openai' or 'google'.
   final String provider;
 
   OllamaModel({

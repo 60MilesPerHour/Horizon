@@ -4,10 +4,9 @@ import 'dart:convert';
 /// translated into each provider's dialect by that provider's service.
 ///
 /// [parameters] is a JSON Schema object (`{"type":"object","properties":{...}}`).
-/// Both backends accept JSON Schema under `function.parameters`, so one schema
-/// covers Ollama and every model OpenRouter serves. The Anthropic
-/// (`input_schema`) and Gemini (`functionDeclarations`) dialects went with the
-/// direct clients in v4.0.0.
+/// Every provider we target accepts JSON Schema here — Ollama, OpenRouter and
+/// OpenAI under `function.parameters`, Anthropic under `input_schema`, Gemini
+/// under `functionDeclarations[].parameters` — so one schema covers them all.
 class ToolDefinition {
   final String name;
   final String description;
@@ -19,7 +18,7 @@ class ToolDefinition {
     required this.parameters,
   });
 
-  /// Ollama / OpenAI Chat Completions shape — the only dialect Horizon emits.
+  /// Ollama / OpenAI Chat Completions shape.
   Map<String, dynamic> toOpenAiJson() => {
         'type': 'function',
         'function': {
@@ -28,12 +27,49 @@ class ToolDefinition {
           'parameters': parameters,
         },
       };
+
+  /// Anthropic Messages shape.
+  Map<String, dynamic> toAnthropicJson() => {
+        'name': name,
+        'description': description,
+        'input_schema': parameters,
+      };
+
+  /// Gemini `functionDeclarations` entry. Gemini's schema dialect is a subset
+  /// of JSON Schema and it rejects unknown keys outright (`additionalProperties`
+  /// and `$schema` are the ones that bite), so the schema is filtered on the
+  /// way out rather than sent verbatim.
+  Map<String, dynamic> toGeminiJson() => {
+        'name': name,
+        'description': description,
+        'parameters': _sanitizeForGemini(parameters),
+      };
+
+  static dynamic _sanitizeForGemini(dynamic node) {
+    if (node is Map) {
+      final out = <String, dynamic>{};
+      for (final entry in node.entries) {
+        final key = entry.key.toString();
+        // Gemini's OpenAPI-flavoured schema has no concept of these.
+        if (key == 'additionalProperties' ||
+            key == r'$schema' ||
+            key == 'default' ||
+            key == 'examples') {
+          continue;
+        }
+        out[key] = _sanitizeForGemini(entry.value);
+      }
+      return out;
+    }
+    if (node is List) return node.map(_sanitizeForGemini).toList();
+    return node;
+  }
 }
 
 /// One model-issued request to run a tool.
 ///
-/// [id] is the provider's correlation handle where there is one (OpenRouter
-/// and OpenAI-compatible endpoints send `tool_calls[].id`). Ollama doesn't
+/// [id] is the provider's correlation handle where there is one (OpenAI's
+/// `tool_calls[].id`, Anthropic's `tool_use.id`). Ollama and Gemini don't
 /// issue one, so we synthesize it and match results back by name instead —
 /// see the per-provider encoders.
 class ToolCall {

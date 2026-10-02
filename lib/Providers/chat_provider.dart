@@ -18,6 +18,7 @@ import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_export_service.dart';
 import 'package:horizon/Services/chat_history_search.dart';
 import 'package:horizon/Services/chat_service_registry.dart';
+import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:horizon/Services/database_service.dart';
 import 'package:horizon/Services/generation_keepalive.dart';
 import 'package:horizon/Services/tool_service.dart';
@@ -1173,11 +1174,16 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<OllamaChat> _importParsed(ImportedChat parsed) async {
+    final target = OpenRouterMigration.forImport(
+      provider: parsed.chat.provider,
+      model: parsed.chat.model,
+      directConfigured: _registry.resolve(parsed.chat.provider).isConfigured,
+    );
 
     // Step 1 — create the chat row with the imported model/provider.
     final chat = await _databaseService.createChat(
-      parsed.chat.model,
-      provider: parsed.chat.provider,
+      target.model,
+      provider: target.provider,
     );
     // Step 2 — patch title/system prompt/options onto the new row.
     await _databaseService.updateChat(

@@ -22,6 +22,7 @@ SecurityAuditInputs inputs({
   bool homeAssistantConfigured = false,
   int sharedChatCount = 0,
   int sharedCloudChatCount = 0,
+  List<DirectProviderAudit> directProviders = const [],
 }) {
   return SecurityAuditInputs(
     ollamaAddress: ollamaAddress,
@@ -43,6 +44,7 @@ SecurityAuditInputs inputs({
     homeAssistantConfigured: homeAssistantConfigured,
     sharedChatCount: sharedChatCount,
     sharedCloudChatCount: sharedCloudChatCount,
+    directProviders: directProviders,
   );
 }
 
@@ -194,6 +196,40 @@ void main() {
       final entry = entryNamed(SecurityAudit.build(inputs()), 'OpenRouter');
       expect(entry.note, contains('forwards'));
       expect(entry.trust, EgressTrust.thirdParty);
+    });
+  });
+
+  group('direct providers', () {
+    DirectProviderAudit claude({bool enabled = false, bool hasKey = false}) =>
+        DirectProviderAudit(
+          name: 'Anthropic (direct)',
+          host: 'api.anthropic.com',
+          enabled: enabled,
+          hasKey: hasKey,
+        );
+
+    test('are not listed until one has a key or is switched on', () {
+      final entries =
+          SecurityAudit.build(inputs(directProviders: [claude()]));
+      expect(entries.any((e) => e.name == 'Anthropic (direct)'), isFalse);
+    });
+
+    test('is a third party, active only with a key and the switch on', () {
+      final keyOnly = entryNamed(
+        SecurityAudit.build(inputs(directProviders: [claude(hasKey: true)])),
+        'Anthropic (direct)',
+      );
+      expect(keyOnly.status, EgressStatus.inactive);
+      expect(keyOnly.trust, EgressTrust.thirdParty);
+
+      final active = entryNamed(
+        SecurityAudit.build(inputs(
+          directProviders: [claude(enabled: true, hasKey: true)],
+        )),
+        'Anthropic (direct)',
+      );
+      expect(active.status, EgressStatus.active);
+      expect(active.host, 'api.anthropic.com');
     });
   });
 

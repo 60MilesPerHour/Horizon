@@ -68,12 +68,30 @@ void main() {
       expect(json['function']['parameters']['type'], 'object');
     });
 
-    test('the schema is passed through verbatim', () {
-      // No dialect filtering any more: the Gemini sanitiser went with the
-      // direct clients in v4.0.0, and OpenRouter takes JSON Schema as-is.
+    test('the OpenAI-shape schema is passed through verbatim', () {
+      // Only Gemini's dialect is filtered; OpenRouter, OpenAI and Ollama take
+      // JSON Schema as-is.
       final params =
           tool.toOpenAiJson()['function']['parameters'] as Map<String, dynamic>;
       expect(params['additionalProperties'], isFalse);
+      expect(params['required'], ['query']);
+    });
+
+    test('Anthropic shape uses input_schema', () {
+      final json = tool.toAnthropicJson();
+      expect(json['name'], 'web_search');
+      expect(json['input_schema']['required'], ['query']);
+      expect(json.containsKey('parameters'), isFalse);
+    });
+
+    test('Gemini shape strips keys its schema dialect rejects', () {
+      final json = tool.toGeminiJson();
+      final params = json['parameters'] as Map<String, dynamic>;
+      expect(params.containsKey('additionalProperties'), isFalse);
+      final query = (params['properties'] as Map)['query'] as Map;
+      expect(query.containsKey('default'), isFalse);
+      // The parts Gemini does understand must survive.
+      expect(params['type'], 'object');
       expect(params['required'], ['query']);
     });
   });

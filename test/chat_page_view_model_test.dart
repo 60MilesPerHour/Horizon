@@ -50,6 +50,9 @@ void main() {
       registry: ChatServiceRegistry(
         ollama: OllamaService(),
         openrouter: OpenRouterService(),
+        claude: ClaudeService(),
+        openai: OpenAIService(),
+        gemini: GeminiService(),
       ),
     );
   });

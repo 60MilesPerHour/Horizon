@@ -3,6 +3,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
+import 'package:horizon/Services/claude_service.dart';
+import 'package:horizon/Services/gemini_service.dart';
+import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 
 const _storage = FlutterSecureStorage();
@@ -25,8 +28,8 @@ class CloudProviderSettings extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Your key is stored in the device\'s secure storage. Ollama keeps '
-          'working with or without it.',
+          'API keys are stored in your device\'s secure storage. Ollama keeps '
+          'working with or without any of this.',
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
@@ -39,14 +42,242 @@ class CloudProviderSettings extends StatelessWidget {
           'One key for Claude, GPT, Gemini, Llama, Qwen and several hundred '
           'others, on one bill. Tool support and image input are read from '
           'OpenRouter per model, so the picker shows what each one can '
-          'actually do. Horizon spoke to Anthropic, OpenAI and Google '
-          'directly until v4.0.0; those chats now run here.',
+          'actually do.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 8),
         const _OpenRouterKeyField(),
+        const SizedBox(height: 24),
+
+        // For anyone who'd rather not have a middleman, or already pays one
+        // of these directly. Folded away because for most setups OpenRouter
+        // above covers all three.
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8.0),
+          title: const Text('Direct provider keys'),
+          subtitle: Text(
+            'Optional — your own Anthropic, OpenAI or Google key',
+            style: theme.textTheme.bodySmall,
+          ),
+          children: [
+            Text(
+              'Each talks to its company\'s API with no one in between. Off '
+              'until you add a key; a provider switched off shows no models.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            _DirectProvider(
+              label: 'Claude (Anthropic)',
+              enableKey: 'enable_direct_anthropic',
+              storageKey: 'anthropic_api_key',
+              hint: 'sk-ant-...',
+              isEnabled: () => context.read<ClaudeService>().enabled,
+              setEnabled: (v) => context.read<ClaudeService>().enabled = v,
+              setKey: (v) => context.read<ClaudeService>().apiKey = v,
+            ),
+            const SizedBox(height: 16),
+            _DirectProvider(
+              label: 'OpenAI',
+              enableKey: 'enable_direct_openai',
+              storageKey: 'openai_api_key',
+              hint: 'sk-...',
+              isEnabled: () => context.read<OpenAIService>().enabled,
+              setEnabled: (v) => context.read<OpenAIService>().enabled = v,
+              setKey: (v) => context.read<OpenAIService>().apiKey = v,
+              // Any OpenAI-compatible endpoint, which is the one thing
+              // OpenRouter can't stand in for.
+              baseUrlStorageKey: 'openai_base_url',
+              setBaseUrl: (v) => context.read<OpenAIService>().baseUrl =
+                  v.isEmpty ? null : v,
+            ),
+            const SizedBox(height: 16),
+            _DirectProvider(
+              label: 'Gemini (Google)',
+              enableKey: 'enable_direct_google',
+              storageKey: 'google_api_key',
+              hint: 'AIza...',
+              isEnabled: () => context.read<GeminiService>().enabled,
+              setEnabled: (v) => context.read<GeminiService>().enabled = v,
+              setKey: (v) => context.read<GeminiService>().apiKey = v,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// One direct provider: its switch, its key, and for OpenAI a base URL.
+///
+/// Behaves like the OpenRouter field rather than the v3 versions of these: the
+/// key applies as you type and is saved on the way out, and pasting one
+/// switches the provider on. The v3 fields only saved from their save button,
+/// and a pasted key with the switch left off just looks like missing models.
+class _DirectProvider extends StatefulWidget {
+  final String label;
+  final String enableKey;
+  final String storageKey;
+  final String hint;
+  final bool Function() isEnabled;
+  final void Function(bool) setEnabled;
+  final void Function(String) setKey;
+  final String? baseUrlStorageKey;
+  final void Function(String)? setBaseUrl;
+
+  const _DirectProvider({
+    required this.label,
+    required this.enableKey,
+    required this.storageKey,
+    required this.hint,
+    required this.isEnabled,
+    required this.setEnabled,
+    required this.setKey,
+    this.baseUrlStorageKey,
+    this.setBaseUrl,
+  });
+
+  @override
+  State<_DirectProvider> createState() => _DirectProviderState();
+}
+
+class _DirectProviderState extends State<_DirectProvider> {
+  final _key = TextEditingController();
+  final _baseUrl = TextEditingController();
+  bool _obscure = true;
+  bool _loaded = false;
+  late bool _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.isEnabled();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      _key.text = await _storage.read(key: widget.storageKey) ?? '';
+      final baseKey = widget.baseUrlStorageKey;
+      if (baseKey != null) {
+        _baseUrl.text = await _storage.read(key: baseKey) ?? '';
+      }
+    } catch (_) {
+      // Secure storage may be unavailable without a keyring; tolerate.
+    } finally {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  void _setEnabled(bool value) {
+    setState(() => _enabled = value);
+    Hive.box('settings').put(widget.enableKey, value);
+    widget.setEnabled(value);
+  }
+
+  void _applyKey(String value) {
+    final trimmed = value.trim();
+    widget.setKey(trimmed);
+    if (trimmed.isNotEmpty && !_enabled) _setEnabled(true);
+  }
+
+  Future<void> _persist() async {
+    Future<void> put(String key, String value) async {
+      try {
+        if (value.isEmpty) {
+          await _storage.delete(key: key);
+        } else {
+          await _storage.write(key: key, value: value);
+        }
+      } catch (_) {}
+    }
+
+    await put(widget.storageKey, _key.text.trim());
+    final baseKey = widget.baseUrlStorageKey;
+    if (baseKey != null) await put(baseKey, _baseUrl.text.trim());
+  }
+
+  Future<void> _save() async {
+    _applyKey(_key.text);
+    widget.setBaseUrl?.call(_baseUrl.text.trim());
+    await _persist();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_key.text.trim().isEmpty
+            ? '${widget.label} key cleared'
+            : '${widget.label} key saved'),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    // Saved on the way out, so closing Settings after a paste keeps the key.
+    // Only once loaded: before then the fields are empty, and persisting
+    // would delete the stored key.
+    if (_loaded) _persist();
+    _key.dispose();
+    _baseUrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(widget.label),
+          subtitle: Text(_enabled ? 'Enabled' : 'Disabled — models hidden'),
+          value: _enabled,
+          onChanged: _setEnabled,
+        ),
+        TextField(
+          controller: _key,
+          enabled: _loaded,
+          obscureText: _obscure,
+          decoration: InputDecoration(
+            labelText: '${widget.label} API Key',
+            hintText: widget.hint,
+            border: const OutlineInputBorder(),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon:
+                      Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.save),
+                  onPressed: _save,
+                ),
+              ],
+            ),
+          ),
+          onChanged: _applyKey,
+          onSubmitted: (_) => _save(),
+        ),
+        if (widget.baseUrlStorageKey != null) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _baseUrl,
+            enabled: _loaded,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Base URL (optional, for compatible endpoints)',
+              hintText: 'https://api.openai.com',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (v) => widget.setBaseUrl?.call(v.trim()),
+            onSubmitted: (_) => _save(),
+          ),
+        ],
       ],
     );
   }
