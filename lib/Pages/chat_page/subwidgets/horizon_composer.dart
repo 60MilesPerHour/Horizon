@@ -13,6 +13,9 @@ class HorizonComposer extends StatefulWidget {
   final TextEditingController controller;
   final String hint;
   final String? modelLabel;
+
+  /// Provider of the chat's model, so the send button can wear its logo.
+  final String? provider;
   final VoidCallback onModelTap;
   final Widget attachButton;
   final bool canSend;
@@ -26,6 +29,7 @@ class HorizonComposer extends StatefulWidget {
     required this.controller,
     required this.hint,
     required this.modelLabel,
+    this.provider,
     required this.onModelTap,
     required this.attachButton,
     required this.canSend,
@@ -76,7 +80,10 @@ class _HorizonComposerState extends State<HorizonComposer> {
     if (widget.streaming) {
       action = HorizonSendButton(onPressed: widget.onStop, icon: Icons.stop_rounded, tooltip: 'Stop');
     } else if (widget.canSend) {
-      action = HorizonSendButton(onPressed: widget.onSend);
+      action = HorizonSendButton(
+        onPressed: widget.onSend,
+        provider: widget.provider,
+      );
     } else {
       action = VoiceOrb(size: 30, onTap: widget.onVoice, tooltip: 'Horizon Voice');
     }

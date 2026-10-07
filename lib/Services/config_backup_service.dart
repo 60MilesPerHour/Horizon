@@ -35,6 +35,7 @@ class ConfigBackupService {
     'cf_access_client_secret',
     'serpapi_api_key',
     'ha_token',
+    'hermes_api_key',
   ];
 
   /// Hive 'settings' keys that are safe, useful config (not secrets, not
@@ -47,6 +48,9 @@ class ConfigBackupService {
     'enable_direct_anthropic',
     'enable_direct_openai',
     'enable_direct_google',
+    'enable_hermes',
+    'hermes_base_url',
+    'hermes_backup_url',
     'web_search_backend',
     'searxng_url',
     'ha_base_url',

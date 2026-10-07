@@ -277,9 +277,11 @@ class _GroupedModelList extends StatelessWidget {
     'anthropic': 'Claude',
     'openai': 'OpenAI',
     'google': 'Gemini',
+    'hermes': 'Hermes agent',
   };
 
   static const _providerOrder = [
+    'hermes',
     'ollama',
     'openrouter',
     'anthropic',

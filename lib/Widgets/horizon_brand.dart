@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 /// The pieces of Horizon's look that don't come from the Material scheme.
 ///
@@ -221,33 +222,127 @@ class _VoiceOrbState extends State<VoiceOrb> with SingleTickerProviderStateMixin
   }
 }
 
-/// The send button: an orange rounded square with a white arrow.
+/// The send button: an orange rounded square with a white arrow — or, when
+/// [provider] is given, that provider's logo in its own colours, so the button
+/// says where the message is about to go.
 class HorizonSendButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final IconData icon;
   final String tooltip;
+
+  /// Provider id ('ollama', 'openrouter', 'anthropic', 'openai', 'google').
+  /// Null, or one without a logo, keeps the orange arrow.
+  final String? provider;
 
   const HorizonSendButton({
     super.key,
     required this.onPressed,
     this.icon = Icons.arrow_upward_rounded,
     this.tooltip = 'Send',
+    this.provider,
   });
+
+  static const Set<String> _logos = {
+    'ollama',
+    'openrouter',
+    'anthropic',
+    'openai',
+    'google',
+  };
+
+  /// Asset path of [provider]'s logo, or null if there isn't one.
+  static String? logoFor(String? provider) =>
+      _logos.contains(provider) ? 'assets/images/providers/$provider.svg' : null;
+
+  /// Google's four colours, swept around the Gemini sparkle the way the
+  /// Gemini icon itself does.
+  static const Gradient _googleSweep = SweepGradient(
+    colors: [
+      Color(0xFF4285F4), // blue
+      Color(0xFFEA4335), // red
+      Color(0xFFFBBC04), // yellow
+      Color(0xFF34A853), // green
+      Color(0xFF4285F4),
+    ],
+  );
+
+  /// Each provider's brand colours, from Simple Icons' brand data: Claude's
+  /// terracotta, OpenRouter's slate, black for Ollama and OpenAI. The
+  /// monochrome ones invert in dark mode, because a black button on the
+  /// composer's near-black card would vanish.
+  static _SendStyle? _styleFor(String? provider, {required bool dark}) {
+    switch (provider) {
+      case 'anthropic':
+        return const _SendStyle(background: Color(0xFFD97757), logo: Colors.white);
+      case 'google':
+        return _SendStyle(
+          background: dark ? const Color(0xFF1F1F1F) : Colors.white,
+          gradient: _googleSweep,
+          border: dark ? const Color(0xFF3C4043) : const Color(0xFFDADCE0),
+        );
+      case 'openrouter':
+        return const _SendStyle(background: Color(0xFF94A3B8), logo: Colors.white);
+      case 'ollama':
+      case 'openai':
+        return dark
+            ? const _SendStyle(background: Colors.white, logo: Colors.black)
+            : const _SendStyle(background: Colors.black, logo: Colors.white);
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final logo = logoFor(provider);
+    final style = logo == null ? null : _styleFor(provider, dark: dark);
+
+    Widget glyph;
+    if (logo == null || style == null) {
+      glyph = Icon(icon, color: Colors.white, size: 20);
+    } else {
+      glyph = SvgPicture.asset(
+        logo,
+        width: 18,
+        height: 18,
+        colorFilter: ColorFilter.mode(style.logo ?? Colors.white, BlendMode.srcIn),
+      );
+      final gradient = style.gradient;
+      if (gradient != null) {
+        glyph = ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: gradient.createShader,
+          child: glyph,
+        );
+      }
+    }
+
+    final radius = BorderRadius.circular(10);
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: dark ? HorizonBrand.sendDark : HorizonBrand.orangeInk,
-        borderRadius: BorderRadius.circular(10),
+        color: style?.background ?? (dark ? HorizonBrand.sendDark : HorizonBrand.orangeInk),
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: style?.border == null ? BorderSide.none : BorderSide(color: style!.border!),
+        ),
         child: InkWell(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(10),
-          child: SizedBox(width: 34, height: 34, child: Icon(icon, color: Colors.white, size: 20)),
+          borderRadius: radius,
+          child: SizedBox(width: 34, height: 34, child: Center(child: glyph)),
         ),
       ),
     );
   }
+}
+
+/// How the send button looks for one provider: a background, and the logo in
+/// either one colour or a gradient.
+class _SendStyle {
+  final Color background;
+  final Color? logo;
+  final Gradient? gradient;
+  final Color? border;
+
+  const _SendStyle({required this.background, this.logo, this.gradient, this.border});
 }

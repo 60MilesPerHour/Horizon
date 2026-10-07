@@ -156,6 +156,9 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/
+    # Provider logos for the send button, from Simple Icons (CC0). The marks
+    # themselves remain their owners' trademarks.
+    - assets/images/providers/
     - assets/wakeword/
     # Bundled so google_fonts never fetches them: the title font showed as
     # plain text whenever the download failed, and the download itself was a

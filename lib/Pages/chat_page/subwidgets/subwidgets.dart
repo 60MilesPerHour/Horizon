@@ -10,3 +10,4 @@ export 'chat_attachment/chat_attachment_image.dart';
 export 'chat_attachment/chat_attachment_preset.dart';
 export 'horizon_home.dart';
 export 'horizon_composer.dart';
+export 'hermes_approval_card.dart';

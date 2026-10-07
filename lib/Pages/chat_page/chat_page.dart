@@ -49,11 +49,18 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
         ),
+        if (vm.pendingApproval != null)
+          HermesApprovalCard(
+            key: ValueKey(vm.pendingApproval!.requestId ?? vm.pendingApproval!.runId),
+            approval: vm.pendingApproval!,
+            onChoice: vm.respondToApproval,
+          ),
         HorizonComposer(
           key: ValueKey(vm.currentChat?.id),
           controller: vm.textFieldController,
           hint: vm.messages.isEmpty ? 'Ask anything' : 'Reply',
           modelLabel: vm.currentChat?.model ?? vm.selectedModel?.name,
+          provider: vm.currentChat?.provider ?? vm.selectedModel?.provider,
           onModelTap: _changeModel,
           attachButton: MenuAnchor(
             menuChildren: [

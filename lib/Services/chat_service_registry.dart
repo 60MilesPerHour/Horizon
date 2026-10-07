@@ -3,6 +3,7 @@ import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Services/chat_service.dart';
 import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/gemini_service.dart';
+import 'package:horizon/Services/hermes_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
@@ -21,13 +22,18 @@ class ChatServiceRegistry {
   final OpenAIService openai;
   final GeminiService gemini;
 
+  /// A Hermes agent on one of your own machines. Optional so call sites that
+  /// predate it (tests, mostly) keep compiling; it's simply off there.
+  final HermesService hermes;
+
   ChatServiceRegistry({
     required this.ollama,
     required this.openrouter,
     required this.claude,
     required this.openai,
     required this.gemini,
-  });
+    HermesService? hermes,
+  }) : hermes = hermes ?? HermesService();
 
   ChatService resolve(String provider) {
     switch (provider) {
@@ -39,6 +45,8 @@ class ChatServiceRegistry {
         return openai;
       case 'google':
         return gemini;
+      case HermesService.id:
+        return hermes;
       case 'ollama':
       default:
         return ollama;
@@ -47,7 +55,7 @@ class ChatServiceRegistry {
 
   ChatService forChat(OllamaChat chat) => resolve(chat.provider);
 
-  List<ChatService> get all => [ollama, openrouter, claude, openai, gemini];
+  List<ChatService> get all => [ollama, openrouter, claude, openai, gemini, hermes];
 
   /// Fetch models from every configured provider. Per-provider failures are
   /// tolerated so one bad key doesn't hide the rest — but if EVERY provider

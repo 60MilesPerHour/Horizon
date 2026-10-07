@@ -113,6 +113,7 @@ void main() async {
   String? openaiKey;
   String? openaiBaseUrl;
   String? geminiKey;
+  String? hermesKey;
   try {
     const storage = FlutterSecureStorage();
     ollamaToken = await storage.read(key: 'ollama_api_token');
@@ -128,6 +129,7 @@ void main() async {
     openaiKey = await storage.read(key: 'openai_api_key');
     openaiBaseUrl = await storage.read(key: 'openai_base_url');
     geminiKey = await storage.read(key: 'google_api_key');
+    hermesKey = await storage.read(key: 'hermes_api_key');
   } catch (_) {
     // Secure storage may be unavailable on Linux without a keyring; tolerate.
   }
@@ -180,12 +182,23 @@ void main() async {
   );
   final geminiService =
       GeminiService(apiKey: geminiKey, enabled: geminiEnabled);
+  // Your own Hermes agent. Same Access token as everything else: it sits
+  // behind the same tunnel.
+  final hermesService = HermesService(
+    baseUrl: settingsBox.get('hermes_base_url') as String?,
+    backupUrl: settingsBox.get('hermes_backup_url') as String?,
+    apiKey: hermesKey,
+    cfAccessClientId: cfAccessClientId,
+    cfAccessClientSecret: cfAccessClientSecret,
+    enabled: settingsBox.get('enable_hermes', defaultValue: false) as bool,
+  );
   final registry = ChatServiceRegistry(
     ollama: ollamaService,
     openrouter: openrouterService,
     claude: claudeService,
     openai: openaiService,
     gemini: geminiService,
+    hermes: hermesService,
   );
 
   // Home Assistant: the instance URL is ordinary config, the long-lived token
@@ -285,6 +298,7 @@ void main() async {
         Provider(create: (_) => claudeService),
         Provider(create: (_) => openaiService),
         Provider(create: (_) => geminiService),
+        Provider(create: (_) => hermesService),
         Provider(create: (_) => registry),
         Provider(create: (_) => webSearchService),
         Provider(create: (_) => homeAssistantService),

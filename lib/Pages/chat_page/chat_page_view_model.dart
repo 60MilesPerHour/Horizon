@@ -140,6 +140,12 @@ class ChatPageViewModel extends ChangeNotifier {
   /// The current chat error, if any
   OllamaException? get currentError => _chatProvider.currentChatError;
 
+  /// A command the Hermes agent is waiting for a yes or no on, if any.
+  HermesApproval? get pendingApproval => _chatProvider.currentChatApproval;
+
+  /// Answers [pendingApproval].
+  Future<void> respondToApproval(String choice) => _chatProvider.respondToApproval(choice);
+
   // ============================================================
   // ChatProvider Actions (Delegated)
   // ============================================================

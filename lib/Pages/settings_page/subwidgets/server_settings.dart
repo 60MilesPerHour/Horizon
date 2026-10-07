@@ -9,6 +9,7 @@ import 'package:hive/hive.dart';
 import 'package:horizon/Extensions/markdown_stylesheet_extension.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_request_state.dart';
+import 'package:horizon/Services/hermes_service.dart';
 import 'package:horizon/Services/ollama_service.dart';
 import 'package:horizon/Services/voice/speech_synthesis_service.dart';
 import 'package:horizon/Services/voice/stt/whisper_live_client.dart';
@@ -567,6 +568,8 @@ class _CloudflareAccessFieldsState extends State<_CloudflareAccessFields> {
       context.read<WhisperTranscriber>().endpoint,
       context.read<WhisperLiveClient>().endpoint,
       context.read<SpeechSynthesisService>().selfHosted,
+      // Same tunnel, so the agent's remote address shares the token too.
+      context.read<HermesService>().endpoint,
     ];
 
     Future<void> put(String key, String value) async {

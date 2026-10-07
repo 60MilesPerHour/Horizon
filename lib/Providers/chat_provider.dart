@@ -21,6 +21,7 @@ import 'package:horizon/Services/chat_service_registry.dart';
 import 'package:horizon/Utils/openrouter_migration.dart';
 import 'package:horizon/Services/database_service.dart';
 import 'package:horizon/Services/generation_keepalive.dart';
+import 'package:horizon/Services/hermes_service.dart';
 import 'package:horizon/Services/tool_service.dart';
 import 'package:horizon/Services/web_search_service.dart';
 import 'package:horizon/Utils/http_error_formatter.dart';
@@ -61,6 +62,15 @@ class ChatProvider extends ChangeNotifier {
   /// label to show ("Searching for …"). Drives the activity line under the
   /// awaiting-reply indicator, distinct from plain "Generating".
   final Map<String, String> _toolActivity = {};
+
+  /// Commands a Hermes agent is holding until the user says yes or no, by
+  /// chat id.
+  final Map<String, HermesApproval> _pendingApprovals = {};
+
+  /// The approval the current chat is waiting on, or null.
+  HermesApproval? get currentChatApproval => _pendingApprovals[currentChat?.id];
+
+  StreamSubscription<HermesEvent>? _hermesEvents;
 
   bool get isCurrentChatSearching =>
       currentChat != null && _toolActivity.containsKey(currentChat?.id);
@@ -116,6 +126,7 @@ class ChatProvider extends ChangeNotifier {
     // "share with assistant" switch was flipped, and the tool would then
     // either miss a shared chat or search one that had been unshared.
     _chatHistorySearch?.chatsSource = () => _chats;
+    _hermesEvents = _registry.hermes.events.listen(_onHermesEvent);
     _initialize();
   }
 
@@ -133,6 +144,7 @@ class ChatProvider extends ChangeNotifier {
       subscription?.cancel();
     }
     _streamSubscriptions.clear();
+    _hermesEvents?.cancel();
     streamingContent.dispose();
     super.dispose();
   }
@@ -898,6 +910,14 @@ class ChatProvider extends ChangeNotifier {
   ) async {
     // The assistant chat is the one nobody prunes, so it's the one that needs
     // a ceiling on what gets sent. Every other chat is sent in full.
+    // A Hermes agent has its own tools, memory and system prompt, and keeps
+    // the history server-side. None of the add-ons below apply to it — and
+    // the search pre-pass would spend a whole agent turn deciding whether to
+    // search.
+    if (chat.provider == HermesService.id) {
+      return (_messages, chat, const <ToolDefinition>[]);
+    }
+
     var outgoing =
         isAssistantChat(chat) ? trimAssistantHistory(_messages) : _messages;
     var systemAddon = '';
@@ -1116,8 +1136,53 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void cancelCurrentStreaming() {
-    _activeChatStreams.remove(currentChat?.id);
+    final chat = currentChat;
+    _activeChatStreams.remove(chat?.id);
+    if (chat != null && chat.provider == HermesService.id) {
+      _pendingApprovals.remove(chat.id);
+      unawaited(_registry.hermes.cancelChat(chat.id));
+    }
     notifyListeners();
+  }
+
+  /// Mirrors what a Hermes agent is doing onto the chat: the tool it's
+  /// running becomes the activity line, and a command it wants to run but
+  /// won't without a yes becomes [currentChatApproval].
+  void _onHermesEvent(HermesEvent event) {
+    switch (event.type) {
+      case HermesEventType.toolStarted:
+        _toolActivity[event.chatId] = event.activityLabel;
+      case HermesEventType.toolFinished:
+        _toolActivity.remove(event.chatId);
+      case HermesEventType.approval:
+        _pendingApprovals[event.chatId] = event.approval!;
+        _toolActivity[event.chatId] = 'Waiting for your approval';
+      case HermesEventType.approvalResolved:
+        if (_pendingApprovals[event.chatId]?.runId == event.runId) {
+          _pendingApprovals.remove(event.chatId);
+        }
+      case HermesEventType.runEnded:
+        _pendingApprovals.remove(event.chatId);
+        _toolActivity.remove(event.chatId);
+    }
+    notifyListeners();
+  }
+
+  /// Answers the current chat's pending approval. The card goes away at once;
+  /// if the answer doesn't reach Hermes the error shows on the chat, and the
+  /// run times out into a denial on its own.
+  Future<void> respondToApproval(String choice) async {
+    final chat = currentChat;
+    final approval = chat == null ? null : _pendingApprovals.remove(chat.id);
+    if (chat == null || approval == null) return;
+    _toolActivity[chat.id] = choice == 'deny' ? 'Denied' : 'Approved';
+    notifyListeners();
+    try {
+      await _registry.hermes.respondToApproval(approval, choice);
+    } on OllamaException catch (error) {
+      _chatErrors[chat.id] = error;
+      notifyListeners();
+    }
   }
 
   void _moveCurrentChatToTop() {
