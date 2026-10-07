@@ -23,6 +23,10 @@ SecurityAuditInputs inputs({
   int sharedChatCount = 0,
   int sharedCloudChatCount = 0,
   List<DirectProviderAudit> directProviders = const [],
+  String hermesAddress = '',
+  String hermesBackupAddress = '',
+  bool hermesEnabled = false,
+  bool hermesHasKey = false,
 }) {
   return SecurityAuditInputs(
     ollamaAddress: ollamaAddress,
@@ -45,6 +49,10 @@ SecurityAuditInputs inputs({
     sharedChatCount: sharedChatCount,
     sharedCloudChatCount: sharedCloudChatCount,
     directProviders: directProviders,
+    hermesAddress: hermesAddress,
+    hermesBackupAddress: hermesBackupAddress,
+    hermesEnabled: hermesEnabled,
+    hermesHasKey: hermesHasKey,
   );
 }
 
@@ -230,6 +238,41 @@ void main() {
       );
       expect(active.status, EgressStatus.active);
       expect(active.host, 'api.anthropic.com');
+    });
+  });
+
+  group('Hermes agent', () {
+    test('is not listed until it has an address or a key', () {
+      expect(SecurityAudit.build(inputs()).any((e) => e.name == 'Hermes agent'), isFalse);
+    });
+
+    test('on the LAN is your hardware, and says it forwards to its model', () {
+      final entry = entryNamed(
+        SecurityAudit.build(inputs(
+          hermesAddress: 'http://172.16.23.30:8642',
+          hermesEnabled: true,
+          hermesHasKey: true,
+        )),
+        'Hermes agent',
+      );
+      expect(entry.status, EgressStatus.active);
+      expect(entry.trust, EgressTrust.yourHardware);
+      expect(entry.note, contains('model it is configured with'));
+      expect(entry.note, isNot(contains('not a private one')));
+    });
+
+    test('a tunnel address is flagged as leaving the network', () {
+      final entry = entryNamed(
+        SecurityAudit.build(inputs(
+          hermesAddress: 'http://172.16.23.30:8642',
+          hermesBackupAddress: 'https://agent.example.com',
+          hermesHasKey: true,
+        )),
+        'Hermes agent',
+      );
+      expect(entry.status, EgressStatus.inactive, reason: 'switched off');
+      expect(entry.host, contains('agent.example.com'));
+      expect(entry.note, contains('not a private one'));
     });
   });
 

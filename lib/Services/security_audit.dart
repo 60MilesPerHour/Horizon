@@ -107,6 +107,10 @@ class SecurityAuditInputs {
     required this.sharedChatCount,
     required this.sharedCloudChatCount,
     this.directProviders = const [],
+    this.hermesAddress = '',
+    this.hermesBackupAddress = '',
+    this.hermesEnabled = false,
+    this.hermesHasKey = false,
   });
 
   final String ollamaAddress;
@@ -145,6 +149,11 @@ class SecurityAuditInputs {
   /// The direct cloud clients. Listed only once one has a key or is switched
   /// on, so the page doesn't fill up with three providers nobody uses.
   final List<DirectProviderAudit> directProviders;
+
+  final String hermesAddress;
+  final String hermesBackupAddress;
+  final bool hermesEnabled;
+  final bool hermesHasKey;
 }
 
 /// Builds the "what goes where" list for the Security & Privacy page.
@@ -312,6 +321,34 @@ class SecurityAudit {
         credential: direct.hasKey ? 'API key in the keystore' : null,
         note: 'Sent straight to the company that makes the model, under your '
             'own account and its terms. No one in between.',
+      ));
+    }
+
+    // ---------------- Hermes agent ----------------
+    final hermesHosts = [
+      for (final url in [input.hermesAddress, input.hermesBackupAddress])
+        if (hostOf(url) != null) hostOf(url)!,
+    ];
+    if (hermesHosts.isNotEmpty || input.hermesHasKey) {
+      final anyPublic = hermesHosts.any((h) => !isPrivateHost(h));
+      entries.add(EgressEntry(
+        name: 'Hermes agent',
+        host: hermesHosts.isEmpty ? null : hermesHosts.join(', '),
+        trust: trustForSelfHostable(hermesHosts.firstOrNull),
+        status: input.hermesEnabled && input.hermesHasKey && hermesHosts.isNotEmpty
+            ? EgressStatus.active
+            : (input.hermesHasKey ? EgressStatus.inactive : EgressStatus.unconfigured),
+        sends: 'Each new message in a chat using the agent, with attachment '
+            'text. The agent keeps the conversation on its own machine.',
+        credential: input.hermesHasKey ? 'API server key in the keystore' : null,
+        note: [
+          'The agent runs commands and reads files on its machine, and passes '
+              'the conversation to whichever model it is configured with — '
+              'which may be a hosted one, under that provider\'s terms.',
+          if (anyPublic)
+            'An address here is not a private one, so requests leave your '
+                'network to reach it.',
+        ].join(' '),
       ));
     }
 

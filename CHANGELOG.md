@@ -32,6 +32,39 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.7.0 — 2026-10-07
+
+**Your own Hermes agent, in Horizon.** Settings → Cloud Models has a Hermes
+agent section: the address of a Hermes API server at home, an optional
+address that works from anywhere, and its key. The agent then shows up in the
+model picker. It isn't a model: it runs its own tools — terminal, files, web,
+memory, skills — on the machine it lives on, and keeps the conversation
+there, so each message sends only what's new.
+
+- What it's doing shows under the reply while it works ("terminal: ls -la
+  ~/Downloads").
+- Anything risky waits for you. A card over the message box shows the
+  command and why it was flagged, with Deny, Allow once, Allow for this chat
+  and Always allow — whichever the agent offers. A denied command doesn't run,
+  and the agent is told not to try it another way.
+- Stop stops the agent, including mid-command or while it's waiting on you.
+- Regenerating, editing, or moving an older chat onto the agent starts it a
+  fresh session from what Horizon shows, so it never answers from turns
+  you've removed.
+- The address from anywhere uses the same Cloudflare Access token as the
+  Ollama server.
+- Security & Privacy lists the agent, and says plainly that it passes the
+  conversation on to whichever model it's set up with.
+- Images aren't sent to the agent yet; it's told one was attached rather than
+  it vanishing.
+- Configuration backups carry the agent's addresses, switch and key.
+
+**The send button wears the logo of where your message is going** — Claude,
+Gemini, OpenAI, OpenRouter or Ollama, in their own colours — and stays the
+orange arrow for anything without one.
+
+---
+
 ## v4.6.0 — 2026-10-02
 
 **Your own Anthropic, OpenAI or Google key, if you'd rather.** Settings →

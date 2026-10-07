@@ -62,7 +62,7 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.cloud_outlined,
           title: 'Cloud Models',
-          subtitle: 'OpenRouter, or your own Anthropic, OpenAI or Google key',
+          subtitle: 'OpenRouter, your own Anthropic, OpenAI or Google key, or a Hermes agent',
           pageBuilder: _cloudPage,
         ),
         SettingsCategoryTile(
