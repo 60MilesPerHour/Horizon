@@ -133,6 +133,13 @@ class AppearanceSettingsPage extends StatelessWidget {
             value: appearance.userBubbles,
             onChanged: controller.setUserBubbles,
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Provider logo on the send button'),
+            subtitle: const Text('Off keeps the orange arrow whichever model the chat is on'),
+            value: appearance.providerLogos,
+            onChanged: controller.setProviderLogos,
+          ),
           const SizedBox(height: 32),
         ],
       ),

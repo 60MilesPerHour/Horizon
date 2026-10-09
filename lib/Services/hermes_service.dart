@@ -54,6 +54,22 @@ class HermesService extends ChatService {
   /// to and how many user turns that session has seen.
   static const String sessionsKey = 'hermes_sessions';
 
+  /// Hive key for the thinking level every chat starts on.
+  static const String thinkingKey = 'hermes_thinking';
+
+  /// Hive key mapping chat ids to a `/think` override for that chat.
+  static const String chatThinkingKey = 'hermes_chat_thinking';
+
+  /// Thinking levels, as Hermes' `model_options.reasoning_effort` spells
+  /// them. '' leaves it to the agent's model; 'none' turns it off.
+  static const List<String> thinkingLevels = ['', 'none', 'minimal', 'low', 'medium', 'high'];
+
+  static String thinkingLabel(String level) => switch (level) {
+        '' => 'model default',
+        'none' => 'off',
+        _ => level,
+      };
+
   final RemoteEndpoint endpoint;
   String apiKey;
   bool enabled;
@@ -62,6 +78,11 @@ class HermesService extends ChatService {
   /// cancel only lands when the next chunk arrives, and a run parked on an
   /// approval or a long command sends no chunks.
   final Map<String, (String, String)> _activeRuns = {};
+
+  /// What each chat's last finished run cost, for `/status`.
+  final Map<String, HermesRunStats> _lastRuns = {};
+
+  HermesRunStats? lastRun(String chatId) => _lastRuns[chatId];
 
   final StreamController<HermesEvent> _events =
       StreamController<HermesEvent>.broadcast();
@@ -132,7 +153,10 @@ class HermesService extends ChatService {
       if (chat.systemPrompt != null && chat.systemPrompt!.trim().isNotEmpty)
         'instructions': chat.systemPrompt,
       if (session.history != null) 'conversation_history': session.history,
+      if (thinkingFor(chat.id).isNotEmpty)
+        'model_options': {'reasoning_effort': thinkingFor(chat.id)},
     };
+    final started = DateTime.now();
 
     // The run is created once; a retried POST with the same key returns the
     // same run instead of starting the turn twice.
@@ -215,6 +239,7 @@ class HermesService extends ChatService {
           case 'run.completed':
             finished = true;
             session.commit();
+            _lastRuns[chat.id] = HermesRunStats.fromUsage(event['usage'], DateTime.now().difference(started));
             final output = event['output'];
             // A model that doesn't stream still produces an answer.
             if (!streamedText && output is String && output.isNotEmpty) yield _text(output, chat);
@@ -255,6 +280,80 @@ class HermesService extends ChatService {
     final text = prompt.replaceFirst(GenerateTitleConstants.prompt, '').trim();
     final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).take(6).join(' ');
     if (words.isNotEmpty) yield _text(words, chat);
+  }
+
+  /// The thinking level [chatId] runs at: its `/think` override, else the
+  /// default from Settings.
+  String thinkingFor(String chatId) {
+    final box = Hive.box('settings');
+    final overrides = (box.get(chatThinkingKey) as Map?) ?? const {};
+    final level = overrides[chatId] ?? box.get(thinkingKey, defaultValue: '');
+    return thinkingLevels.contains(level) ? level as String : '';
+  }
+
+  /// Sets [chatId]'s thinking level; null goes back to the Settings default.
+  Future<void> setChatThinking(String chatId, String? level) async {
+    final box = Hive.box('settings');
+    final overrides = Map<String, dynamic>.from((box.get(chatThinkingKey) as Map?) ?? const {});
+    if (level == null) {
+      overrides.remove(chatId);
+    } else {
+      overrides[chatId] = level;
+    }
+    await box.put(chatThinkingKey, overrides);
+  }
+
+  bool hasChatThinking(String chatId) =>
+      ((Hive.box('settings').get(chatThinkingKey) as Map?) ?? const {}).containsKey(chatId);
+
+  /// The Hermes session [chatId] is bound to and how many turns it has seen.
+  ({String id, int turns})? sessionOf(String chatId) {
+    final stored = ((Hive.box('settings').get(sessionsKey) as Map?) ?? const {})[chatId];
+    if (stored is! Map || stored['id'] is! String) return null;
+    return (id: stored['id'] as String, turns: (stored['turns'] as int?) ?? 0);
+  }
+
+  /// Makes the agent forget [chatId]: the next message starts a session with
+  /// no history, though Horizon's transcript stays on screen. [userTurns] is
+  /// how many user messages the chat holds now, so the next one lines up.
+  Future<void> resetSession(String chatId, int userTurns) async {
+    final box = Hive.box('settings');
+    final all = Map<String, dynamic>.from((box.get(sessionsKey) as Map?) ?? const {});
+    all[chatId] = {'id': 'horizon-$chatId-${const Uuid().v4().substring(0, 8)}', 'turns': userTurns};
+    await box.put(sessionsKey, all);
+  }
+
+  /// Forgets every chat's session; each continues on a fresh one seeded with
+  /// its transcript.
+  Future<void> forgetAllSessions() => Hive.box('settings').delete(sessionsKey);
+
+  /// The agent's toolsets, enabled ones first.
+  Future<List<HermesToolset>> listToolsets() async {
+    if (!isConfigured) throw OllamaException('$_logTag Not configured.');
+    final response = await _guard(() => endpoint.withFailover((base) => HorizonHttp.client
+        .get(RemoteEndpoint.resolve(base, '/v1/toolsets'), headers: _headers(base))
+        .timeout(const Duration(seconds: 15))));
+    final body = utf8.decode(response.bodyBytes);
+    if (response.statusCode != 200) {
+      throw OllamaException('$_logTag ${HttpErrorFormatter.formatHttpError(response.statusCode, body: body)}');
+    }
+    try {
+      final data = (json.decode(body) as Map<String, dynamic>)['data'] as List<dynamic>? ?? const [];
+      final sets = [
+        for (final entry in data)
+          if (entry is Map)
+            HermesToolset(
+              name: '${entry['name'] ?? ''}',
+              description: '${entry['description'] ?? ''}',
+              enabled: entry['enabled'] == true,
+              tools: (entry['tools'] as List<dynamic>? ?? const []).length,
+            ),
+      ];
+      sets.sort((a, b) => a.enabled == b.enabled ? 0 : (a.enabled ? -1 : 1));
+      return sets;
+    } on FormatException {
+      throw OllamaException('$_logTag ${endpoint.describeAccessBlock(body, endpoint.candidates().first) ?? 'Unreadable toolset list.'}');
+    }
   }
 
   /// Resolves a pending approval. [choice] is one of [HermesApproval.choices].
@@ -362,6 +461,41 @@ class _HermesSession {
   final void Function() commit;
 
   _HermesSession(this.id, this.history, this.commit);
+}
+
+/// Tokens and time of one finished run.
+class HermesRunStats {
+  final int inputTokens;
+  final int outputTokens;
+  final int cachedTokens;
+  final Duration duration;
+
+  const HermesRunStats({
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.cachedTokens,
+    required this.duration,
+  });
+
+  factory HermesRunStats.fromUsage(Object? usage, Duration duration) {
+    final u = usage is Map ? usage : const {};
+    int read(String key) => (u[key] as num?)?.toInt() ?? 0;
+    return HermesRunStats(
+      inputTokens: read('input_tokens'),
+      outputTokens: read('output_tokens'),
+      cachedTokens: read('cache_read_tokens'),
+      duration: duration,
+    );
+  }
+}
+
+class HermesToolset {
+  final String name;
+  final String description;
+  final bool enabled;
+  final int tools;
+
+  const HermesToolset({required this.name, required this.description, required this.enabled, required this.tools});
 }
 
 /// A command Hermes won't run without a yes.

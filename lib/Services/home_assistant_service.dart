@@ -14,10 +14,16 @@ import 'package:horizon/Utils/horizon_http.dart';
 /// Config is held in memory and mutated live by Settings, mirroring the chat
 /// and speech services.
 class HomeAssistantService {
-  HomeAssistantService({String? baseUrl, String? token}) : baseUrl = baseUrl ?? '', token = token ?? '';
+  HomeAssistantService({String? baseUrl, String? token, this.toolsEnabled = true})
+      : baseUrl = baseUrl ?? '',
+        token = token ?? '';
 
   String baseUrl;
   String token;
+
+  /// Whether models are offered the Home Assistant tools. Off keeps the
+  /// connection without handing the house to every chat.
+  bool toolsEnabled;
 
   /// The instance URL and a token are both required — HA rejects every
   /// endpoint without the bearer, so a URL alone can't do anything.

@@ -4,6 +4,8 @@ import 'package:responsive_framework/responsive_framework.dart';
 
 import 'package:horizon/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_attachment.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/appearance_controller.dart';
+import 'package:horizon/Services/hermes_commands.dart';
 import 'package:horizon/Widgets/chat_app_bar.dart';
 import 'package:horizon/Widgets/horizon_brand.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
@@ -60,7 +62,9 @@ class _ChatPageState extends State<ChatPage> {
           controller: vm.textFieldController,
           hint: vm.messages.isEmpty ? 'Ask anything' : 'Reply',
           modelLabel: vm.currentChat?.model ?? vm.selectedModel?.name,
-          provider: vm.currentChat?.provider ?? vm.selectedModel?.provider,
+          provider: context.watch<AppearanceController>().appearance.providerLogos
+              ? vm.currentChat?.provider ?? vm.selectedModel?.provider
+              : null,
           onModelTap: _changeModel,
           attachButton: MenuAnchor(
             menuChildren: [
@@ -87,6 +91,8 @@ class _ChatPageState extends State<ChatPage> {
           onSend: _sendMessage,
           onStop: vm.cancelStreaming,
           onVoice: () => Navigator.pushNamed(context, '/assistant'),
+          commands: vm.commandSuggestions,
+          onCommand: vm.pickCommand,
         ),
       ],
     );
@@ -116,7 +122,7 @@ class _ChatPageState extends State<ChatPage> {
       key: PageStorageKey<String>(_viewModel.currentChat?.id ?? 'empty'),
       messages: _viewModel.messages,
       isAwaitingReply: _viewModel.isThinking,
-      statusLabel: _viewModel.activityLabel ?? 'Generating',
+      statusLabel: _viewModel.statusLabel,
       streamingContent: _viewModel.isStreaming ? _viewModel.streamingContent : null,
       error: _viewModel.currentError != null
           ? ChatError(
@@ -182,6 +188,35 @@ class _ChatPageState extends State<ChatPage> {
     await _viewModel.sendMessage(
       onModelSelectionRequired: _showModelSelectionBottomSheet,
       onServerNotConfigured: _onServerNotConfigured,
+      onCommand: _showCommandResult,
+    );
+  }
+
+  void _showCommandResult(HermesCommandResult result) {
+    if (!mounted) return;
+    final detail = result.detail;
+    if (detail == null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * .7),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            children: [
+              Text(result.message, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              SelectableText(detail, style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

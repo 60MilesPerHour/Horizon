@@ -59,6 +59,14 @@ class _FakeHermes {
         hang?.complete();
         req.response.write('{"status":"stopping"}');
         await req.response.close();
+      } else if (path == '/v1/toolsets') {
+        req.response.write(json.encode({
+          'data': [
+            {'name': 'browser', 'description': 'navigate, click', 'enabled': false, 'tools': ['a', 'b']},
+            {'name': 'web', 'description': 'web_search, web_extract', 'enabled': true, 'tools': ['web_search', 'web_extract']},
+          ]
+        }));
+        await req.response.close();
       } else if (path == '/v1/models') {
         req.response.write(json.encode({
           'data': [
@@ -224,6 +232,66 @@ void main() {
   // Against the real agent. Set HERMES_URL and HERMES_KEY to run.
   final liveUrl = Platform.environment['HERMES_URL'];
   final liveKey = Platform.environment['HERMES_KEY'];
+  test('thinking: nothing sent by default, the Settings level otherwise, a chat override over both', () async {
+    fake.script = (_) => _reply('ok');
+    await _collect(service.chatStream([_user('a')], chat: chat));
+    expect(fake.runBodies.last.containsKey('model_options'), isFalse);
+
+    await Hive.box('settings').put(HermesService.thinkingKey, 'none');
+    await _collect(service.chatStream([_user('a'), _assistant('ok'), _user('b')], chat: chat));
+    expect(fake.runBodies.last['model_options'], {'reasoning_effort': 'none'});
+
+    await service.setChatThinking(chat.id, 'high');
+    expect(service.hasChatThinking(chat.id), isTrue);
+    await _collect(service.chatStream(
+        [_user('a'), _assistant('ok'), _user('b'), _assistant('ok'), _user('c')], chat: chat));
+    expect(fake.runBodies.last['model_options'], {'reasoning_effort': 'high'});
+
+    // Back to the Settings default.
+    await service.setChatThinking(chat.id, null);
+    expect(service.thinkingFor(chat.id), 'none');
+  });
+
+  test('reset starts a fresh session with no history, then carries on in it', () async {
+    fake.script = (_) => _reply('ok');
+    await _collect(service.chatStream([_user('a')], chat: chat));
+    final first = fake.runBodies.last['session_id'];
+
+    await service.resetSession(chat.id, 1);
+    final transcript = [_user('a'), _assistant('ok'), _user('b')];
+    await _collect(service.chatStream(transcript, chat: chat));
+    final fresh = fake.runBodies.last['session_id'];
+    expect(fresh, isNot(first));
+    expect(fake.runBodies.last.containsKey('conversation_history'), isFalse,
+        reason: 'reset means the agent forgets, not a re-seed');
+
+    await _collect(service.chatStream([...transcript, _assistant('ok'), _user('c')], chat: chat));
+    expect(fake.runBodies.last['session_id'], fresh);
+    expect(service.sessionOf(chat.id)?.turns, 3);
+  });
+
+  test('a finished run records what it cost', () async {
+    fake.script = (_) => [
+          {'event': 'message.delta', 'delta': 'hi'},
+          {
+            'event': 'run.completed',
+            'output': 'hi',
+            'usage': {'input_tokens': 23773, 'output_tokens': 140, 'cache_read_tokens': 2464},
+          },
+        ];
+    await _collect(service.chatStream([_user('a')], chat: chat));
+    final stats = service.lastRun(chat.id)!;
+    expect(stats.inputTokens, 23773);
+    expect(stats.outputTokens, 140);
+    expect(stats.cachedTokens, 2464);
+  });
+
+  test('toolsets list enabled ones first', () async {
+    final sets = await service.listToolsets();
+    expect(sets.map((t) => t.name), ['web', 'browser']);
+    expect(sets.first.tools, 2);
+  });
+
   test('live: two turns share a session and an approval can be denied', () async {
     final live = HermesService(baseUrl: liveUrl, apiKey: liveKey, enabled: true);
     final liveChat = OllamaChat(id: 'live-${DateTime.now().millisecondsSinceEpoch}', model: 'horizon-agent', provider: 'hermes');

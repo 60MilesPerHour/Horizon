@@ -3,6 +3,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:horizon/Models/settings_route_arguments.dart';
 
 import 'package:horizon/Pages/settings_page/appearance_settings_page.dart';
+import 'package:horizon/Pages/settings_page/hermes_settings_page.dart';
+import 'package:horizon/Pages/settings_page/home_assistant_settings_page.dart';
 import 'package:horizon/Pages/settings_page/security_audit_page.dart';
 import 'package:horizon/Pages/settings_page/settings_category_page.dart';
 import 'package:horizon/Pages/settings_page/voice_settings_page.dart';
@@ -62,8 +64,14 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.cloud_outlined,
           title: 'Cloud Models',
-          subtitle: 'OpenRouter, your own Anthropic, OpenAI or Google key, or a Hermes agent',
+          subtitle: 'OpenRouter, or your own Anthropic, OpenAI or Google key',
           pageBuilder: _cloudPage,
+        ),
+        SettingsCategoryTile(
+          icon: Icons.smart_toy_outlined,
+          title: 'Hermes Agent',
+          subtitle: 'Your own agent: connection, thinking level, commands, sessions',
+          pageBuilder: _hermesPage,
         ),
         SettingsCategoryTile(
           icon: Icons.handyman_outlined,
@@ -74,7 +82,7 @@ class _SettingsPageContent extends StatelessWidget {
         SettingsCategoryTile(
           icon: Icons.home_outlined,
           title: 'Home Assistant',
-          subtitle: 'Let the model read sensors and control your house',
+          subtitle: 'Connection, and whether models may read and control your house',
           pageBuilder: _homeAssistantPage,
         ),
         SettingsCategoryTile(
@@ -132,10 +140,9 @@ Widget _toolsPage(BuildContext context) => const SettingsCategoryPage(
 
 Widget _voicePage(BuildContext context) => const VoiceSettingsPage();
 
-Widget _homeAssistantPage(BuildContext context) => const SettingsCategoryPage(
-      title: 'Home Assistant',
-      children: [HomeAssistantSettings()],
-    );
+Widget _homeAssistantPage(BuildContext context) => const HomeAssistantSettingsPage();
+
+Widget _hermesPage(BuildContext context) => const HermesSettingsPage();
 
 Widget _securityPage(BuildContext context) => const SecurityAuditPage();
 

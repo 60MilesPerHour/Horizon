@@ -121,22 +121,6 @@ class _HomeAssistantSettingsState extends State<HomeAssistantSettings> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Home Assistant',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Lets the model read your entities and call services: check a '
-          'sensor, turn something on, set a temperature, run a scene. It can '
-          'do anything this token can do, so issue it a token you are happy '
-          'with — Home Assistant has no finer-grained scope for long-lived '
-          'tokens.',
-          style: theme.textTheme.bodySmall,
-        ),
-        const SizedBox(height: 16),
         TextField(
           controller: _urlController,
           enabled: _loaded,

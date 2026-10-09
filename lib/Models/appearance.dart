@@ -44,6 +44,10 @@ class Appearance {
   /// the assistant's text.
   final bool userBubbles;
 
+  /// Whether the send button wears the chat's provider logo, or stays the
+  /// orange arrow whatever the model.
+  final bool providerLogos;
+
   const Appearance({
     this.themeMode = ThemeMode.system,
     this.seedColor = Colors.grey,
@@ -54,6 +58,7 @@ class Appearance {
     this.cornerRadius = 10.0,
     this.compact = false,
     this.userBubbles = true,
+    this.providerLogos = true,
   });
 
   Appearance copyWith({
@@ -66,6 +71,7 @@ class Appearance {
     double? cornerRadius,
     bool? compact,
     bool? userBubbles,
+    bool? providerLogos,
   }) {
     return Appearance(
       themeMode: themeMode ?? this.themeMode,
@@ -77,6 +83,7 @@ class Appearance {
       cornerRadius: cornerRadius ?? this.cornerRadius,
       compact: compact ?? this.compact,
       userBubbles: userBubbles ?? this.userBubbles,
+      providerLogos: providerLogos ?? this.providerLogos,
     );
   }
 

@@ -51,9 +51,11 @@ class ConfigBackupService {
     'enable_hermes',
     'hermes_base_url',
     'hermes_backup_url',
+    'hermes_thinking',
     'web_search_backend',
     'searxng_url',
     'ha_base_url',
+    'ha_tools_enabled',
     // Voice server addresses. A restore that brings back the chat server but
     // not the speech one leaves voice quietly on the device recogniser.
     'whisper_base_url',

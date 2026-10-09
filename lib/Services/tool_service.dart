@@ -238,7 +238,7 @@ class ToolService {
     if (_chatSearch?.isConfiguredFor(chatProvider) == true) {
       tools.add(_searchChatsTool);
     }
-    if (_homeAssistant?.isConfigured == true) {
+    if (_homeAssistant?.isConfigured == true && _homeAssistant!.toolsEnabled) {
       tools.addAll(const [
         _haListEntitiesTool,
         _haGetStateTool,

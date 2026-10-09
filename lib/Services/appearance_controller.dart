@@ -33,6 +33,7 @@ class AppearanceController extends ChangeNotifier {
   static const String _keyCornerRadius = 'corner_radius';
   static const String _keyCompact = 'compact_density';
   static const String _keyUserBubbles = 'user_bubbles';
+  static const String _keyProviderLogos = 'send_button_provider_logo';
 
   Appearance _read() {
     return Appearance(
@@ -45,6 +46,7 @@ class AppearanceController extends ChangeNotifier {
       cornerRadius: (_box.get(_keyCornerRadius) as num?)?.toDouble() ?? 10.0,
       compact: _box.get(_keyCompact, defaultValue: false) as bool,
       userBubbles: _box.get(_keyUserBubbles, defaultValue: true) as bool,
+      providerLogos: _box.get(_keyProviderLogos, defaultValue: true) as bool,
     );
   }
 
@@ -121,6 +123,9 @@ class AppearanceController extends ChangeNotifier {
   Future<void> setUserBubbles(bool enabled) =>
       _apply(_appearance.copyWith(userBubbles: enabled), _keyUserBubbles, enabled);
 
+  Future<void> setProviderLogos(bool enabled) =>
+      _apply(_appearance.copyWith(providerLogos: enabled), _keyProviderLogos, enabled);
+
   /// Back to the shipped defaults, without touching anything else in the box.
   Future<void> resetToDefaults() async {
     _appearance = const Appearance();
@@ -137,6 +142,7 @@ class AppearanceController extends ChangeNotifier {
       _keyCornerRadius,
       _keyCompact,
       _keyUserBubbles,
+      _keyProviderLogos,
     ]);
   }
 }

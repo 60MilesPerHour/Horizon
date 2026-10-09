@@ -32,6 +32,40 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.8.0 — 2026-10-09
+
+**Commands for the Hermes agent.** Type `/` in a chat with the agent and a
+menu of commands opens over the prompt: `/new`, `/reset`, `/think`, `/stop`,
+`/status`, `/tools` and `/help`. Horizon answers these itself rather than
+sending them, because the agent's API has no commands of its own — `/new`
+sent as a message was just the word "new" to the model. Only exact command
+names are caught, so a message that starts with a path still goes through.
+
+- `/think off|minimal|low|medium|high|default` sets how hard the agent thinks
+  in that chat. Settings → Hermes Agent sets the level every chat starts on.
+  Most of a slow reply was the model reasoning before answering — one turn
+  spent three minutes on it — and the agent's API doesn't stream that. With
+  thinking off, a short answer comes back in a couple of seconds.
+- `/status` shows the chat's session, its thinking level, and what the last
+  turn cost in time and tokens.
+- `/reset` makes the agent forget the chat while the transcript stays on screen.
+- While the agent works, the reply says "Thinking" instead of "Generating".
+
+**Hermes Agent and Home Assistant have their own pages in Settings**, laid
+out like Voice. Hermes moves out of Cloud Models and gets connection, thinking
+level, the command list, and a button to forget every agent session. Home
+Assistant gets a switch that stops models using it without deleting the
+token, and a list of what its tools can do.
+
+**The send button stays put.** It used to jump when you started typing,
+because the voice orb is larger than the send button, and it moved again
+whenever the model changed, because its position depended on how long the
+model's name was. It now sits in a fixed spot at the right edge.
+
+- Settings → Appearance has a switch for the provider logo on the send button.
+
+---
+
 ## v4.7.0 — 2026-10-07
 
 **Your own Hermes agent, in Horizon.** Settings → Cloud Models has a Hermes

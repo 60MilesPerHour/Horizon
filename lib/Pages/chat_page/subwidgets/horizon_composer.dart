@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:horizon/Services/hermes_commands.dart';
 import 'package:horizon/Widgets/horizon_brand.dart';
 
 /// The composer: a floating card with the prompt on top and, beneath it,
@@ -24,6 +25,10 @@ class HorizonComposer extends StatefulWidget {
   final VoidCallback onStop;
   final VoidCallback onVoice;
 
+  /// Slash commands matching what's typed, listed over the prompt.
+  final List<HermesCommand> commands;
+  final ValueChanged<HermesCommand>? onCommand;
+
   const HorizonComposer({
     super.key,
     required this.controller,
@@ -37,6 +42,8 @@ class HorizonComposer extends StatefulWidget {
     required this.onSend,
     required this.onStop,
     required this.onVoice,
+    this.commands = const [],
+    this.onCommand,
   });
 
   @override
@@ -66,9 +73,46 @@ class _HorizonComposerState extends State<HorizonComposer> {
     super.deactivate();
   }
 
+  /// The voice orb at size 30 plus its 60 % halo; send and stop sit centred
+  /// in the same square.
+  static const double _actionSlot = 48;
+
   // Phones: Enter is a new line and the button sends. Desktop: Enter sends,
   // Shift+Enter is a new line.
   bool get _mobile => Platform.isAndroid || Platform.isIOS;
+
+  Widget _commandMenu(ThemeData theme, Color faint) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, right: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final c in widget.commands)
+            InkWell(
+              onTap: () => widget.onCommand?.call(c),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                      text: '/${c.name}',
+                      style: theme.textTheme.bodyMedium?.copyWith(color: HorizonBrand.accent(context)),
+                    ),
+                    if (c.args != null) TextSpan(text: ' ${c.args}', style: theme.textTheme.bodySmall?.copyWith(color: faint)),
+                    TextSpan(text: '  ${c.description}', style: theme.textTheme.bodySmall?.copyWith(color: faint)),
+                  ]),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          Divider(height: 8, color: theme.colorScheme.outlineVariant.withValues(alpha: .5)),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +120,7 @@ class _HorizonComposerState extends State<HorizonComposer> {
     final dark = theme.brightness == Brightness.dark;
     final faint = theme.colorScheme.onSurfaceVariant.withValues(alpha: .7);
 
-    final Widget action;
+    Widget action;
     if (widget.streaming) {
       action = HorizonSendButton(onPressed: widget.onStop, icon: Icons.stop_rounded, tooltip: 'Stop');
     } else if (widget.canSend) {
@@ -87,6 +131,9 @@ class _HorizonComposerState extends State<HorizonComposer> {
     } else {
       action = VoiceOrb(size: 30, onTap: widget.onVoice, tooltip: 'Horizon Voice');
     }
+    // One slot for all three, sized to the orb and its halo. Without it the
+    // row shrank 14 px and the button slid sideways the moment you typed.
+    action = SizedBox(width: _actionSlot, height: _actionSlot, child: Center(child: action));
 
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 4, 14, 12),
@@ -102,6 +149,7 @@ class _HorizonComposerState extends State<HorizonComposer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (widget.commands.isNotEmpty) _commandMenu(theme, faint),
           CallbackShortcuts(
             bindings: {
               const SingleActivator(LogicalKeyboardKey.enter, shift: true): () {
@@ -136,31 +184,36 @@ class _HorizonComposerState extends State<HorizonComposer> {
             children: [
               widget.attachButton,
               const SizedBox(width: 2),
-              Flexible(
-                child: InkWell(
-                  onTap: widget.onModelTap,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            widget.modelLabel ?? 'Choose a model',
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: widget.modelLabel == null ? HorizonBrand.accent(context) : faint,
+              // Expanded, not Flexible + Spacer: those split the free space,
+              // so the button sat wherever the model name's width left it and
+              // moved every time the model changed.
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: InkWell(
+                    onTap: widget.onModelTap,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              widget.modelLabel ?? 'Choose a model',
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: widget.modelLabel == null ? HorizonBrand.accent(context) : faint,
+                              ),
                             ),
                           ),
-                        ),
-                        Icon(Icons.expand_more, size: 16, color: faint),
-                      ],
+                          Icon(Icons.expand_more, size: 16, color: faint),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-              const Spacer(),
               action,
             ],
           ),

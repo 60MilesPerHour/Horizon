@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import 'package:horizon/Services/claude_service.dart';
 import 'package:horizon/Services/gemini_service.dart';
-import 'package:horizon/Services/hermes_service.dart';
 import 'package:horizon/Services/openai_service.dart';
 import 'package:horizon/Services/openrouter_service.dart';
 
@@ -50,8 +49,6 @@ class CloudProviderSettings extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const _OpenRouterKeyField(),
-        const SizedBox(height: 24),
-        const _HermesAgentSettings(),
         const SizedBox(height: 24),
 
         // For anyone who'd rather not have a middleman, or already pays one
@@ -448,180 +445,6 @@ class _ProviderKillSwitchState extends State<_ProviderKillSwitch> {
       subtitle: Text(_enabled ? 'Enabled' : 'Disabled — models hidden'),
       value: _enabled,
       onChanged: _toggle,
-    );
-  }
-}
-
-/// Your own Hermes agent: its API server's address at home, the tunnel address
-/// for everywhere else, and the API server key. Shows up in the model picker
-/// as "Hermes agent"; a chat on it runs tools on that machine and asks here
-/// before anything risky.
-class _HermesAgentSettings extends StatefulWidget {
-  const _HermesAgentSettings();
-
-  @override
-  State<_HermesAgentSettings> createState() => _HermesAgentSettingsState();
-}
-
-class _HermesAgentSettingsState extends State<_HermesAgentSettings> {
-  final _url = TextEditingController();
-  final _backup = TextEditingController();
-  final _key = TextEditingController();
-  bool _obscure = true;
-  bool _loaded = false;
-  late bool _enabled;
-
-  HermesService get _service => context.read<HermesService>();
-
-  @override
-  void initState() {
-    super.initState();
-    final box = Hive.box('settings');
-    _enabled = box.get('enable_hermes', defaultValue: false) as bool;
-    _url.text = box.get('hermes_base_url') as String? ?? '';
-    _backup.text = box.get('hermes_backup_url') as String? ?? '';
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      _key.text = await _storage.read(key: 'hermes_api_key') ?? '';
-    } catch (_) {
-      // Secure storage may be unavailable without a keyring; tolerate.
-    } finally {
-      if (mounted) setState(() => _loaded = true);
-    }
-  }
-
-  void _setEnabled(bool value) {
-    setState(() => _enabled = value);
-    Hive.box('settings').put('enable_hermes', value);
-    _service.enabled = value;
-  }
-
-  void _applyAddresses() {
-    final box = Hive.box('settings');
-    box.put('hermes_base_url', _url.text.trim());
-    box.put('hermes_backup_url', _backup.text.trim());
-    _service.endpoint
-      ..primary = _url.text.trim()
-      ..backup = _backup.text.trim()
-      ..reset();
-  }
-
-  void _applyKey(String value) {
-    final trimmed = value.trim();
-    _service.apiKey = trimmed;
-    // Same rule as every other provider here: pasting a key is the intent.
-    if (trimmed.isNotEmpty && !_enabled) _setEnabled(true);
-  }
-
-  Future<void> _persistKey() async {
-    final value = _key.text.trim();
-    try {
-      if (value.isEmpty) {
-        await _storage.delete(key: 'hermes_api_key');
-      } else {
-        await _storage.write(key: 'hermes_api_key', value: value);
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _save() async {
-    _applyAddresses();
-    _applyKey(_key.text);
-    await _persistKey();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Hermes agent saved')),
-    );
-  }
-
-  @override
-  void dispose() {
-    // Only once loaded: before then the key field is empty, and persisting
-    // would delete the stored key.
-    if (_loaded) _persistKey();
-    _url.dispose();
-    _backup.dispose();
-    _key.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Hermes agent'),
-          subtitle: Text(_enabled ? 'Enabled' : 'Disabled — agent hidden'),
-          value: _enabled,
-          onChanged: _setEnabled,
-        ),
-        Text(
-          'A Hermes agent on one of your machines, through its API server. It '
-          'runs its own tools there — terminal, files, web, memory — and asks '
-          'here before running anything risky. Uses the Cloudflare Access '
-          'token from Server settings for the remote address.',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _url,
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'Address at home',
-            hintText: 'http://172.16.23.30:8642',
-            border: OutlineInputBorder(),
-          ),
-          onChanged: (_) => _applyAddresses(),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _backup,
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'Address from anywhere (optional)',
-            hintText: 'https://agent.example.com',
-            border: OutlineInputBorder(),
-          ),
-          onChanged: (_) => _applyAddresses(),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _key,
-          enabled: _loaded,
-          obscureText: _obscure,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: 'API server key',
-            hintText: 'API_SERVER_KEY from the profile\'s .env',
-            border: const OutlineInputBorder(),
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
-                  onPressed: () => setState(() => _obscure = !_obscure),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.save),
-                  onPressed: _save,
-                ),
-              ],
-            ),
-          ),
-          onChanged: _applyKey,
-          onSubmitted: (_) => _save(),
-        ),
-      ],
     );
   }
 }

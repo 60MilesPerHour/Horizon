@@ -206,6 +206,7 @@ void main() async {
   final homeAssistantService = HomeAssistantService(
     baseUrl: settingsBox.get('ha_base_url') as String?,
     token: haToken,
+    toolsEnabled: settingsBox.get('ha_tools_enabled', defaultValue: true) as bool,
   );
 
   // `chatsSource` is wired by ChatProvider below — the search service is built

@@ -12,8 +12,10 @@ import 'package:horizon/Models/chat_preset.dart';
 import 'package:horizon/Models/ollama_chat.dart';
 import 'package:horizon/Models/ollama_exception.dart';
 import 'package:horizon/Models/ollama_message.dart';
+import 'package:horizon/Models/model_capabilities.dart';
 import 'package:horizon/Models/ollama_model.dart';
 import 'package:horizon/Providers/chat_provider.dart';
+import 'package:horizon/Services/hermes_commands.dart';
 import 'package:horizon/Services/services.dart';
 
 class ChatPageViewModel extends ChangeNotifier {
@@ -137,6 +139,11 @@ class ChatPageViewModel extends ChangeNotifier {
   /// null when it's just generating.
   String? get activityLabel => _chatProvider.currentChatActivity;
 
+  /// The awaiting-reply label. An agent spends most of a slow turn
+  /// reasoning, which its API doesn't stream, so say that rather than
+  /// "Generating" over a reply that hasn't started.
+  String get statusLabel => activityLabel ?? (isHermes ? 'Thinking' : 'Generating');
+
   /// The current chat error, if any
   OllamaException? get currentError => _chatProvider.currentChatError;
 
@@ -145,6 +152,110 @@ class ChatPageViewModel extends ChangeNotifier {
 
   /// Answers [pendingApproval].
   Future<void> respondToApproval(String choice) => _chatProvider.respondToApproval(choice);
+
+  // ============================================================
+  // Hermes Commands
+  // ============================================================
+
+  HermesService get _hermes => _registry.hermes;
+
+  /// Whether what's typed goes to a Hermes agent: the open chat's, or the
+  /// model picked for the next one.
+  bool get isHermes => (currentChat?.provider ?? _selectedModel?.provider) == HermesService.id;
+
+  /// Commands matching what's being typed, for the menu over the composer.
+  List<HermesCommand> get commandSuggestions =>
+      isHermes ? HermesCommand.matching(textFieldController.text) : const [];
+
+  /// Fills the composer with [command], ready for its argument or Enter.
+  void pickCommand(HermesCommand command) {
+    final text = '/${command.name}${command.args == null ? '' : ' '}';
+    textFieldController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  Future<HermesCommandResult> _runCommand(HermesCommand command, String arg) async {
+    final chat = currentChat;
+    switch (command.name) {
+      case 'help':
+        return HermesCommandResult('Commands', detail: [
+          for (final c in HermesCommand.all)
+            '/${c.name}${c.args == null ? '' : ' ${c.args}'}\n    ${c.description}',
+        ].join('\n'));
+
+      case 'new':
+        if (chat == null) return const HermesCommandResult('This is already a fresh chat.');
+        _selectedModel = OllamaModel.cloud(
+          provider: HermesService.id,
+          id: chat.model,
+          capabilities: const ModelCapabilities(completion: true),
+        );
+        _chatProvider.destinationChatSelected(0);
+        return const HermesCommandResult('New chat with the agent.');
+
+      case 'reset':
+        if (chat == null) return const HermesCommandResult('Nothing to forget yet.');
+        final turns = messages.where((m) => m.role == OllamaMessageRole.user).length;
+        await _hermes.resetSession(chat.id, turns);
+        return const HermesCommandResult('The agent starts this chat fresh from your next message.');
+
+      case 'think':
+        if (chat == null) {
+          return const HermesCommandResult('Send a message first — /think applies to a chat. '
+              'The default for new chats is in Settings → Hermes Agent.');
+        }
+        if (arg.isEmpty) {
+          final level = HermesService.thinkingLabel(_hermes.thinkingFor(chat.id));
+          final own = _hermes.hasChatThinking(chat.id) ? 'set for this chat' : 'from Settings';
+          return HermesCommandResult('Thinking: $level ($own).');
+        }
+        final level = HermesCommand.thinkingLevel(arg);
+        if (level == null) return HermesCommandResult('No thinking level "$arg". Try ${command.args}.');
+        await _hermes.setChatThinking(chat.id, arg.toLowerCase() == 'default' ? null : level);
+        return HermesCommandResult('Thinking in this chat: ${HermesService.thinkingLabel(_hermes.thinkingFor(chat.id))}.');
+
+      case 'stop':
+        if (!isStreaming) return const HermesCommandResult('The agent isn\'t doing anything.');
+        cancelStreaming();
+        return const HermesCommandResult('Stopped.');
+
+      case 'status':
+        final lines = <String>[
+          'Agent: ${_hermes.endpoint.primary.isEmpty ? 'not set' : _hermes.endpoint.primary}',
+        ];
+        if (chat == null) {
+          lines.add('No chat yet — the session starts with your first message.');
+        } else {
+          final session = _hermes.sessionOf(chat.id);
+          lines
+            ..add('Session: ${session?.id ?? 'starts with your next message'}')
+            ..add('Turns the agent has seen: ${session?.turns ?? 0}')
+            ..add('Thinking: ${HermesService.thinkingLabel(_hermes.thinkingFor(chat.id))}');
+          final last = _hermes.lastRun(chat.id);
+          if (last != null) {
+            final secs = (last.duration.inMilliseconds / 1000).toStringAsFixed(1);
+            lines.add('Last turn: ${secs}s, ${last.inputTokens} tokens in '
+                '(${last.cachedTokens} cached), ${last.outputTokens} out');
+          }
+        }
+        return HermesCommandResult('Status', detail: lines.join('\n'));
+
+      case 'tools':
+        try {
+          final sets = await _hermes.listToolsets();
+          final on = sets.where((t) => t.enabled).toList();
+          return HermesCommandResult('${on.length} of ${sets.length} toolsets on', detail: [
+            for (final t in sets)
+              '${t.enabled ? '●' : '○'} ${t.name} (${t.tools})${t.description.isEmpty ? '' : '\n    ${t.description}'}',
+          ].join('\n'));
+        } on OllamaException catch (e) {
+          return HermesCommandResult(e.message);
+        }
+    }
+    return HermesCommandResult('Unknown command /${command.name}.');
+  }
 
   // ============================================================
   // ChatProvider Actions (Delegated)
@@ -330,7 +441,27 @@ class ChatPageViewModel extends ChangeNotifier {
   Future<bool> sendMessage({
     required Future<void> Function() onModelSelectionRequired,
     required void Function() onServerNotConfigured,
+    void Function(HermesCommandResult result)? onCommand,
   }) async {
+    // A Hermes command is answered here and never sent — including /stop,
+    // which is why this comes before the streaming guard.
+    final command = isHermes ? HermesCommand.parse(textFieldController.text) : null;
+    if (command != null && !hasStagedFiles) {
+      _takeTextFieldValue();
+      notifyListeners();
+      final result = await _runCommand(command.$1, command.$2);
+      notifyListeners();
+      onCommand?.call(result);
+      return false;
+    }
+    // Enter on a half-typed command that can only mean one thing finishes it
+    // instead of sending "/th" to the agent.
+    final candidates = command == null ? commandSuggestions : const <HermesCommand>[];
+    if (candidates.length == 1 && textFieldController.text.length > 1) {
+      pickCommand(candidates.single);
+      return false;
+    }
+
     // Early return if nothing to send or currently streaming. A message with
     // no text but a staged file is still a message — "summarise this" is
     // implied, and OllamaMessage.promptContent says so explicitly.
