@@ -47,6 +47,7 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
   );
 
   List<SpeechVoice> _elevenLabsVoices = const [];
+  List<SpeechVoice> _elevenLabsModels = const [];
   bool _loadingVoices = false;
   bool _previewingVoice = false;
 
@@ -54,6 +55,16 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
   void initState() {
     super.initState();
     _refreshAssistantRole();
+    // Seeded from the launch-time fetch so the pickers open populated. If
+    // that fetch hadn't finished (or there was no key yet), fetch now.
+    _elevenLabsVoices = _synthesis.elevenLabsVoices;
+    _elevenLabsModels = _synthesis.elevenLabsModels;
+    if (_synthesis.engine == SpeechEngine.elevenLabs &&
+        (_elevenLabsVoices.isEmpty || _elevenLabsModels.isEmpty)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadElevenLabsVoices();
+      });
+    }
   }
 
   @override
@@ -148,6 +159,8 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
             _elevenLabsKeyField(),
             const SizedBox(height: 12),
             _elevenLabsVoicePicker(),
+            const SizedBox(height: 12),
+            _elevenLabsModelPicker(),
           ],
           const SizedBox(height: 8),
           _rateSlider(),
@@ -851,12 +864,57 @@ class _VoiceSettingsPageState extends State<VoiceSettingsPage> {
   Future<void> _loadElevenLabsVoices() async {
     if (_synthesis.elevenLabsKey.isEmpty) return;
     setState(() => _loadingVoices = true);
-    final voices = await _synthesis.listElevenLabsVoices();
+    await _synthesis.warmElevenLabsCatalog();
     if (!mounted) return;
     setState(() {
-      _elevenLabsVoices = voices;
+      _elevenLabsVoices = _synthesis.elevenLabsVoices;
+      _elevenLabsModels = _synthesis.elevenLabsModels;
       _loadingVoices = false;
     });
+  }
+
+  Widget _elevenLabsModelPicker() {
+    final theme = Theme.of(context);
+    if (_loadingVoices) return const SizedBox.shrink();
+
+    final currentId = _synthesis.elevenLabsModelId;
+    if (_elevenLabsModels.isEmpty) {
+      return Text(
+        _synthesis.elevenLabsKey.isEmpty
+            ? 'Add a key to list models.'
+            : 'No models loaded — $currentId will be used.',
+        style: theme.textTheme.bodySmall,
+      );
+    }
+
+    final hasCurrent = _elevenLabsModels.any((m) => m.id == currentId);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: hasCurrent ? currentId : _elevenLabsModels.first.id,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Model',
+            border: OutlineInputBorder(),
+          ),
+          items: _elevenLabsModels
+              .map((m) => DropdownMenuItem(value: m.id, child: Text(m.name)))
+              .toList(),
+          onChanged: (value) async {
+            if (value == null) return;
+            setState(() => _synthesis.elevenLabsModelId = value);
+            await _settings.put('elevenlabs_model_id', value);
+          },
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Flash and Turbo answer fastest; Multilingual v2 sounds best but '
+          'adds most of a second per sentence.',
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
+    );
   }
 
   Widget _elevenLabsVoicePicker() {

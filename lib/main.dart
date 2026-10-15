@@ -268,6 +268,7 @@ void main() async {
     engine: SpeechEngine.fromString(settingsBox.get('voice_engine') as String?),
     elevenLabsKey: elevenLabsKey,
     elevenLabsVoiceId: settingsBox.get('elevenlabs_voice_id') as String?,
+    elevenLabsModelId: settingsBox.get('elevenlabs_model_id') as String?,
     systemVoiceLocale: settingsBox.get('voice_tts_locale') as String?,
     selfHostedBaseUrl: settingsBox.get('tts_base_url') as String?,
     selfHostedBackupUrl: settingsBox.get('tts_backup_url') as String?,
@@ -278,6 +279,10 @@ void main() async {
     selfHostedKey: ttsKey,
     rate: (settingsBox.get('voice_rate') as num?)?.toDouble(),
   );
+  // Voices and models for the Settings pickers, fetched now rather than
+  // when the page opens. Off the main path; a failure just leaves the
+  // pickers to fetch on demand.
+  unawaited(speechSynthesis.warmElevenLabsCatalog());
 
   // "Hey Horizon". Built here rather than in the widget tree so it outlives
   // any one screen; it opens Horizon Voice through the app's navigator.

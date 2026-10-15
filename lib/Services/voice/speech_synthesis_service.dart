@@ -88,6 +88,10 @@ class SpeechSynthesisService {
   /// account, so a fresh key works with no further setup.
   String elevenLabsVoiceId;
 
+  /// ElevenLabs model id. Defaults to the low-latency turbo model; the
+  /// Settings picker lists whatever the account's `/v1/models` offers.
+  String elevenLabsModelId;
+
   /// System TTS voice/locale, e.g. `en-GB`. Empty uses the device default.
   String systemVoiceLocale;
 
@@ -115,6 +119,7 @@ class SpeechSynthesisService {
     SpeechEngine? engine,
     String? elevenLabsKey,
     String? elevenLabsVoiceId,
+    String? elevenLabsModelId,
     String? systemVoiceLocale,
     String? selfHostedBaseUrl,
     String? selfHostedBackupUrl,
@@ -133,6 +138,9 @@ class SpeechSynthesisService {
         engine = engine ?? SpeechEngine.system,
         elevenLabsKey = elevenLabsKey ?? '',
         elevenLabsVoiceId = elevenLabsVoiceId ?? _defaultVoiceId,
+        elevenLabsModelId = (elevenLabsModelId ?? '').isEmpty
+            ? defaultElevenLabsModel
+            : elevenLabsModelId!,
         systemVoiceLocale = systemVoiceLocale ?? '',
         selfHostedModel = selfHostedModel ?? defaultSelfHostedModel,
         selfHostedVoice = selfHostedVoice ?? defaultSelfHostedVoice,
@@ -165,7 +173,13 @@ class SpeechSynthesisService {
 
   /// Low-latency model; the quality difference against the multilingual v2
   /// model is small next to the difference in how long the user waits.
-  static const String _elevenLabsModel = 'eleven_turbo_v2_5';
+  static const String defaultElevenLabsModel = 'eleven_turbo_v2_5';
+
+  /// Voices and models last fetched from ElevenLabs. Warmed at launch by
+  /// [warmElevenLabsCatalog] so the Settings pickers open populated instead
+  /// of showing a progress bar while two round-trips complete.
+  List<SpeechVoice> elevenLabsVoices = const [];
+  List<SpeechVoice> elevenLabsModels = const [];
 
   final FlutterTts _systemTts = FlutterTts();
 
@@ -556,7 +570,7 @@ class SpeechSynthesisService {
             },
             body: json.encode({
               'text': text,
-              'model_id': _elevenLabsModel,
+              'model_id': elevenLabsModelId,
               'voice_settings': {
                 'stability': 0.5,
                 'similarity_boost': 0.75,
@@ -571,6 +585,19 @@ class SpeechSynthesisService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Fetches voices and models together and keeps them on the service.
+  /// Called at launch when a key is present, and by Settings to refresh.
+  /// A failed fetch leaves the previous list alone rather than blanking it.
+  Future<void> warmElevenLabsCatalog() async {
+    if (elevenLabsKey.isEmpty) return;
+    final results = await Future.wait([
+      listElevenLabsVoices(),
+      listElevenLabsModels(),
+    ]);
+    if (results[0].isNotEmpty) elevenLabsVoices = results[0];
+    if (results[1].isNotEmpty) elevenLabsModels = results[1];
   }
 
   /// Lists the voices on the configured ElevenLabs account, or an empty list
@@ -594,6 +621,34 @@ class SpeechSynthesisService {
           .where((v) => v.id.isNotEmpty)
           .toList();
       return voices;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Lists the ElevenLabs models that can do text to speech, or an empty
+  /// list if the key is missing or the call fails. The endpoint also returns
+  /// speech-to-speech and sound-effect models, which are no use here.
+  Future<List<SpeechVoice>> listElevenLabsModels() async {
+    if (elevenLabsKey.isEmpty) return const [];
+    try {
+      final response = await HorizonHttp.client.get(
+        Uri.https('api.elevenlabs.io', '/v1/models'),
+        headers: {'xi-api-key': elevenLabsKey},
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) return const [];
+
+      final body = json.decode(utf8.decode(response.bodyBytes));
+      if (body is! List) return const [];
+      return body
+          .whereType<Map>()
+          .where((m) => m['can_do_text_to_speech'] == true)
+          .map((m) => SpeechVoice(
+                id: (m['model_id'] ?? '').toString(),
+                name: (m['name'] ?? m['model_id'] ?? 'Model').toString(),
+              ))
+          .where((m) => m.id.isNotEmpty)
+          .toList();
     } catch (_) {
       return const [];
     }
