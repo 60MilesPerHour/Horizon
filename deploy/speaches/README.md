@@ -9,13 +9,10 @@ faster-whisper, speech via Kokoro. No API keys, no per-hour billing.
 docker compose up -d
 ```
 
-Deployed at `~/speaches/` on the rig. Not `/srv/speaches` alongside immich,
-because creating a directory under `/srv` needs sudo and the named volume
-makes the compose file's location irrelevant anyway.
+The compose file uses a named volume for models, so it can live anywhere.
 
-**It publishes host port 8001, not 8000.** Something localhost-only already
-holds 8000 on that box (a Honcho instance, by its API), and binding
-`0.0.0.0:8000` would collide with it.
+**It publishes host port 8001, not 8000**, so it can share a box with
+something that already holds 8000. Change the mapping if you'd rather.
 
 ## Pull the models
 
@@ -25,10 +22,10 @@ it (`uvx`/`speaches-cli` aren't installed), so use the API:
 
 ```bash
 # Speech to text — turbo is the accuracy/speed sweet spot on a 3090
-curl -X POST http://172.16.23.20:8001/v1/models/deepdml/faster-whisper-large-v3-turbo-ct2
+curl -X POST http://<host>:8001/v1/models/deepdml/faster-whisper-large-v3-turbo-ct2
 
 # Text to speech
-curl -X POST http://172.16.23.20:8001/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX
+curl -X POST http://<host>:8001/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX
 ```
 
 Useful neighbours on the same API:
@@ -42,17 +39,18 @@ Useful neighbours on the same API:
 
 ## Point Horizon at it
 
-Settings → Voice:
+Settings → Voice. Speaches is the **Accuracy pass** (the Whisper server that
+cleans up the live transcript before it's sent) and the self-hosted voice;
+live transcription itself is WhisperLive, see the main README.
 
-| Field | Value |
-|---|---|
-| Speech to text | **Whisper** |
-| Server address | `http://172.16.23.20:8001` |
-| Model | `deepdml/faster-whisper-large-v3-turbo-ct2` |
-| Text to speech | **Self-hosted** |
-| Server address | `http://172.16.23.20:8001` (prefilled from the above) |
-| Model | `speaches-ai/Kokoro-82M-v1.0-ONNX` |
-| Voice | `af_heart` (tap a suggestion chip for others) |
+| Section | Field | Value |
+|---|---|---|
+| Speech to text → **Whisper** | Server address | `http://<host>:8001` |
+| | Remote address (optional) | the same server through a tunnel or Tailscale, for away from home |
+| | Model | `deepdml/faster-whisper-large-v3-turbo-ct2` |
+| Text to speech → **Self-hosted** | Server address | `http://<host>:8001` ("Use my speech server" fills it in) |
+| | Model | `speaches-ai/Kokoro-82M-v1.0-ONNX` |
+| | Voice | `af_heart` (tap a suggestion chip for others) |
 
 Leave both API key fields empty — Speaches doesn't require one by default.
 
@@ -70,8 +68,8 @@ enough that CPU is a reasonable default for it regardless.
 ## Checking it works
 
 ```bash
-curl http://172.16.23.20:8001/v1/models | head
+curl http://<host>:8001/v1/models | head
 ```
 
-There's also a browser UI at `http://172.16.23.20:8001` (`ENABLE_UI=true`)
+There's also a browser UI at `http://<host>:8001` (`ENABLE_UI=true`)
 for trying a model without going through the app.

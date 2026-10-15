@@ -17,10 +17,10 @@ human but it's punctuation to the phonemizer.
 It's worse than cosmetic: the notebook does
 `model_name = target_phrase.replace(" ", "_")`, so the phrase becomes both the
 output *filename* and the label openWakeWord registers the model under — the
-string your app has to match on. `hey_ass_trul` is the spelling you want.
+string your app has to match on. `hey_horizon` is the spelling you want.
 
 `train.py` now refuses a hyphenated phrase up front and tells you what to use,
-rather than failing an hour in or silently producing `Hey_Ass-trul.tflite`.
+rather than failing an hour in or silently producing `Hey_Horizon.onnx`.
 
 **2. The environment.** The notebook installs its own torch at runtime:
 
@@ -45,12 +45,12 @@ docker compose build          # ~10 min, mostly the torch base image
 
 # Listen before you commit to a training run. Do this every time you change
 # the phrase — an hour of training will faithfully learn a mispronunciation.
-docker compose run --rm preview hey_ass_trul
+docker compose run --rm preview hey_horizon
 #   -> ./out/preview.wav
 
-docker compose run --rm train hey_ass_trul
-#   -> ./out/hey_ass_trul.onnx
-#   -> ./out/hey_ass_trul.tflite
+docker compose run --rm train hey_horizon
+#   -> ./out/hey_horizon.onnx
+#   -> ./out/hey_horizon.tflite
 ```
 
 ## Defaults worth knowing
@@ -68,9 +68,10 @@ run with a different phrase skips all the downloading.
 ## Output
 
 Both `.onnx` and `.tflite` — openWakeWord's exporter produces the ONNX and
-`onnx2tf` converts it. Horizon will want the `.tflite`, plus openWakeWord's
-two shared feature models (`melspectrogram.tflite` and
-`embedding_model.tflite`), which are **not** part of your trained model. The
-Colab fetches those at runtime via `openwakeword.utils.download_models()`;
-they're baked into this image, and they'll need bundling as app assets since
-there's no Python in the app to fetch them.
+`onnx2tf` converts it. Horizon runs the **`.onnx`** through ONNX Runtime
+(`assets/wakeword/hey_horizon.onnx`); the `.tflite` is unused. It also needs
+openWakeWord's two shared feature models (`melspectrogram.onnx` and
+`embedding_model.onnx`), which are **not** part of your trained model but
+already ship in `assets/wakeword/`, so a new phrase only replaces the one
+file. The Colab fetches those at runtime via
+`openwakeword.utils.download_models()`; they're baked into this image.

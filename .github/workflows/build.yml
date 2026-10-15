@@ -300,10 +300,30 @@ jobs:
           fi
           ls -la release/
 
+      # The release body is the tag's CHANGELOG.md section. GitHub's generated
+      # notes are still appended underneath for the compare link; before this
+      # step they were the whole body, which is why v4.0.0–v4.8.0 shipped with
+      # a one-line "Full Changelog" stub until they were backfilled.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            scripts/release-notes.sh
+          sparse-checkout-cone-mode: false
+          path: src
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          if ! bash src/scripts/release-notes.sh "${GITHUB_REF_NAME}" src/CHANGELOG.md > notes.md; then
+            echo "::warning::No CHANGELOG.md section for ${GITHUB_REF_NAME}; using generated notes only."
+            : > notes.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: Horizon ${{ github.ref_name }}
           files: release/*
+          body_path: notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true

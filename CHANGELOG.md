@@ -24,7 +24,7 @@ never released:
 | 3.9.1, 3.10.0 | **v3.11.0** |
 | 3.11.1, 3.12.0 | **v3.13.0** |
 
-Nothing published is wrong — all 33 release tags match their `pubspec.yaml`
+Nothing published is wrong — every release tag matches its `pubspec.yaml`
 exactly — and the history has deliberately not been rewritten to tidy this,
 because renumbering would repoint every one of those tags at an orphaned
 commit for a purely cosmetic gain. Gaps in the released sequence (there is no

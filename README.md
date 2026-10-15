@@ -23,12 +23,14 @@ Local models on your own hardware, hundreds of hosted ones through OpenRouter, t
 
 ## What it does
 
-**Talk to any model.** Ollama on your own machine (or Ollama Cloud) and every model on [OpenRouter](https://openrouter.ai) — Claude, GPT, Gemini, Llama, Qwen and hundreds more — side by side. Switch models mid-conversation without losing the thread. The picker shows what each model can actually do (vision, tools, thinking), read from the provider rather than guessed from a name.
+**Talk to any model.** Ollama on your own machine (or Ollama Cloud), every model on [OpenRouter](https://openrouter.ai) — Claude, GPT, Gemini, Llama, Qwen and hundreds more — and Anthropic, OpenAI or Google directly with your own key, side by side. Switch models mid-conversation without losing the thread. The picker shows what each model can actually do (vision, tools, thinking), read from the provider rather than guessed from a name.
 
 **Tools, when a question needs them.** The model can search the web (your own SearXNG, or SerpAPI), read the pages it finds, check the time, and cite its sources. Point Horizon at **Home Assistant** and it can read your sensors and control your home — "is the garage shut?", "dim the living room" — looking entity ids up rather than guessing them. Opt a chat in, and other conversations can search it when they need something you worked out there.
 
+**Your own agent.** Point Horizon at a [Hermes](https://github.com/NousResearch/hermes-agent) agent and it appears in the model picker beside the models. It isn't one: it runs its own tools — terminal, files, web, memory — on the machine it lives on, shows what it's doing under the reply, and anything risky waits for you to allow or deny it. Type `/` in an agent chat for its commands: `/new`, `/reset`, `/think`, `/stop`, `/status`, `/tools`, `/help`.
+
 **Horizon Voice.** A voice mode that works like a conversation, not a form:
-- words appear as you speak, transcribed live by a Whisper server you run;
+- words appear as you speak, transcribed live by a Whisper server you run, or by ElevenLabs Scribe;
 - it knows when you've finished — from what you're saying, not just how loud the room is — and keeps listening turn after turn;
 - a second, more accurate pass cleans up the transcript before it's sent;
 - replies are read aloud and shown like lyrics, the sentence being spoken lit in orange;
@@ -38,7 +40,7 @@ Any reply in any chat can be read aloud from its menu, too.
 
 **Every chat, its own way.** Model, system prompt, temperature, context size, thinking on or off — all per conversation. Branch a chat at any message to explore another path, edit and regenerate, attach photos and documents, and export or import conversations as Markdown.
 
-**Private by design.** Your conversations go only where you point them. Settings → Security & Privacy is generated from your actual configuration: every destination, what goes there, whether it's active right now, and where each credential lives — including the awkward parts, like OpenRouter passing your conversation to whoever serves the model. Keys live in the OS keystore, never in plain settings.
+**Private by design.** Your conversations go only where you point them. Settings → Security & Privacy is generated from your actual configuration: every destination, what goes there, whether it's active right now, and where each credential lives — including the awkward parts, like OpenRouter passing your conversation to whoever serves the model. Outbound requests shows every request that actually left this session. Keys live in the OS keystore, never in plain settings.
 
 **Built for self-hosting.** A primary and a backup address for every server you run, with automatic failover — your LAN address at home, a Tailscale or tunnel hostname away from it — plus bearer tokens and Cloudflare Access service tokens where you need them.
 
@@ -49,18 +51,19 @@ Any reply in any chat can be read aloud from its menu, too.
 | Platform | Download | Notes |
 |---|---|---|
 | **Android** | `horizon-vX.Y.Z.apk` from [Releases](https://github.com/60MilesPerHour/Horizon/releases) | Signed. Sideload from Files or with adb. |
-| **macOS** | `horizon-macos.zip` | Unsigned. After unzipping: `xattr -dr com.apple.quarantine /Applications/Horizon.app` |
-| **Windows** | `horizon-windows.zip` | Extract and run `horizon.exe`. |
+| **macOS** | `horizon-vX.Y.Z-macos.zip` | Unsigned. After unzipping: `xattr -dr com.apple.quarantine /Applications/Horizon.app` |
+| **Windows** | `horizon-vX.Y.Z-windows.zip` | Extract and run `horizon.exe`. |
 | **Debian / Ubuntu** | `horizon_X.Y.Z_amd64.deb` | `sudo apt install ./horizon_X.Y.Z_amd64.deb` |
 | **Other Linux** | `horizon-X.Y.Z-linux-x64.tar.gz` | Extract and run `./horizon`. |
-| **iOS** | Not distributed | Builds from source with an Apple developer account. |
+| **iOS** | `horizon-vX.Y.Z.ipa` (when the iOS build succeeds) | Unsigned. Sign it yourself with SideStore, AltStore or Sideloadly and a free Apple ID (re-sign every 7 days). |
 
 ## Set up
 
 1. **A model.** Settings → Ollama Server → your server's address (`http://<host>:11434`), plus an optional backup address for when you're away from home. For Ollama Cloud, use `https://ollama.com` and your `olc-…` token. And/or Settings → Cloud Models → an OpenRouter key, or your own Anthropic, OpenAI or Google key under Direct provider keys.
 2. **Tools** *(optional)*. Settings → Tools & Web Search → a SearXNG address or a SerpAPI key. Reading pages and checking the time work without either.
 3. **Home Assistant** *(optional)*. Settings → Home Assistant → your instance URL and a long-lived access token. "Test connection" tells you which one is wrong.
-4. **Voice** *(optional)*. Settings → Voice. For live transcription, run a WhisperLive server and enter its address under Live; add a Whisper-compatible server (such as Speaches) under Accuracy pass. Choose how replies are spoken — the device's own voice, a self-hosted one, or ElevenLabs — and turn on "Hey Horizon" if you want it.
+4. **Voice** *(optional)*. Settings → Voice. For live transcription, run a WhisperLive server and enter its address under Live, or choose Scribe to use ElevenLabs (same key as speech output); add a Whisper-compatible server (such as Speaches) under Accuracy pass. Choose how replies are spoken — the device's own voice, a self-hosted one, or ElevenLabs — and turn on "Hey Horizon" if you want it.
+5. **Hermes agent** *(optional)*. Settings → Hermes Agent → the address of your Hermes API server, an optional address that works from anywhere, and its key. Set the thinking level every chat starts on; `/think` changes it per chat.
 
 Coming from Reins? [Moving over from Reins](docs/MIGRATING_FROM_REINS.md) covers what's needed, what's optional, and importing your `.reins` files and transcripts.
 
@@ -74,7 +77,7 @@ docker run -d --gpus all -p 9090:9090 ghcr.io/collabora/whisperlive-gpu:latest \
   -fw deepdml/faster-whisper-large-v3-turbo-ct2
 ```
 
-`-fw` loads one model and shares it, so a new conversation connects instantly instead of loading a model each time. For the accuracy pass and self-hosted speech, [Speaches](https://github.com/speaches-ai/speaches) serves both Whisper and Kokoro behind the OpenAI-compatible API.
+`-fw` loads one model and shares it, so a new conversation connects instantly instead of loading a model each time. For the accuracy pass and self-hosted speech, [Speaches](https://github.com/speaches-ai/speaches) serves both Whisper and Kokoro behind the OpenAI-compatible API; [deploy/speaches](deploy/speaches/) has a compose file and the settings to enter. Training your own wake word is in [deploy/wakeword-training](deploy/wakeword-training/).
 
 ## Build from source
 
@@ -86,7 +89,7 @@ flutter run                   # the connected device
 flutter build apk --release   # Android
 ```
 
-Needs Flutter 3.44 (what CI builds with) and Dart 3.12. CI builds Android, iOS, macOS, Windows and Linux on every push to `main`; releases are cut from `v*` tags.
+Needs Flutter 3.44 (what CI builds with) and Dart 3.12. CI builds Android, iOS, macOS, Windows and Linux on every push and pull request to `main`; releases are cut from `v*` tags, with the release notes taken from that version's section of `CHANGELOG.md`.
 
 ## Contributing
 

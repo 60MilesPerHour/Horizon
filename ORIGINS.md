@@ -7,7 +7,7 @@ it weren't for you, İbrahim, none of this would exist today.
 Horizon builds upon the legacy of Reins by introducing cloud models alongside
 local ones, tools that search and read the web, control of your home through
 Home Assistant, a voice you can simply talk to — one that listens for "Hey
-Horizon" — and a version that runs on the web.
+Horizon" — and an agent of your own that sits beside the models.
 
 You can still see Reins throughout Horizon's evolution: in the way a
 conversation opens, the model picker that slides up from the bottom, the

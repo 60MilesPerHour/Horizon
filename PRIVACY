@@ -1,3 +1,3 @@
 Horizon does not track you, and collects nothing about you: there are no accounts, analytics or telemetry.
 
-Your conversations go only to the servers you configure — your own Ollama server, OpenRouter if you add a key, and the search, speech and Home Assistant services you choose to connect. Settings → Security & Privacy lists every one of them, what is sent, and where each credential is stored.
+Your conversations go only to the servers you configure — your own Ollama server; OpenRouter, Anthropic, OpenAI or Google if you add their keys; your own Hermes agent, which passes the conversation on to whichever model it is set up with; and the search, speech and Home Assistant services you choose to connect. Settings → Security & Privacy lists every one of them, what is sent, and where each credential is stored.
