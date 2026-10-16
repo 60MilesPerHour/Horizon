@@ -66,12 +66,14 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
           ),
         MenuAnchor(
           menuChildren: [
-            if (chat != null)
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.tune),
-                onPressed: () => _handleConfigureButton(context),
-                child: const Text('Chat settings'),
-              ),
+            // Always offered: with no chat open yet, the provider keeps the
+            // settings as a pending configuration and applies them to the
+            // chat created by the first message (see _createNewChatInternal).
+            MenuItemButton(
+              leadingIcon: const Icon(Icons.tune),
+              onPressed: () => _handleConfigureButton(context),
+              child: const Text('Chat settings'),
+            ),
             MenuItemButton(
               leadingIcon: const Icon(Icons.file_upload_outlined),
               onPressed: () => _handleImport(context),

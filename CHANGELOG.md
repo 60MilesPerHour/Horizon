@@ -32,6 +32,26 @@ commit for a purely cosmetic gain. Gaps in the released sequence (there is no
 
 ---
 
+## v4.9.0 — 2026-10-15
+
+**Pick the ElevenLabs model.** The model id was hardcoded to
+`eleven_turbo_v2_5`. It is now a setting with a dropdown under the voice
+picker, listing whatever ElevenLabs reports as TTS-capable. Voices and models
+are fetched once at launch when a key is present, so the Voice settings
+pickers open populated instead of showing a progress bar.
+
+**Chat settings before the first message, again.** The v4.4.0 app-bar
+redesign moved "Chat settings" into the overflow menu and only listed it once a
+chat existed — so the system prompt and options could no longer be set up on
+the empty-chat screen. The item is now always offered; with no chat open the
+settings are held as a pending configuration and applied to the chat the first
+message creates, which the provider has supported all along.
+
+**Release notes come from this file.** GitHub releases used to ship with only
+the auto-generated "Full Changelog" link; the release job now takes the tag's
+section here as the body. README, PRIVACY, ORIGINS and the server docs were
+brought back in line with what the app actually does.
+
 ## v4.8.0 — 2026-10-09
 
 **Commands for the Hermes agent.** Type `/` in a chat with the agent and a
